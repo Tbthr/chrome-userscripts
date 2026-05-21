@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Translate X Post with AI (Markdown Support & Multi-Engine)
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      3.3
 // @description  Dynamically translate X posts using custom AI engines (Volcengine, DeepSeek, OpenAI, etc.) with Markdown support and beautiful settings modal.
 // @author       You
 // @match        https://x.com/*
@@ -91,8 +91,73 @@ const DEFAULT_USER_PROMPT = `处理说明：
 处理文本：`;
 
 const STORAGE_KEYS = {
-    SETTINGS: 'x_translate_settings_v3'
+    SETTINGS: 'x_translate_settings_v3',
+    CACHE: 'x_translate_cache_v1'
 };
+
+const MAX_CACHE_SIZE = 500;
+let memoryCache = null;
+
+function loadCache() {
+    if (memoryCache) return memoryCache;
+    try {
+        const raw = GM_getValue(STORAGE_KEYS.CACHE, '');
+        memoryCache = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+        console.error('[X-Translate] Failed to parse cache:', e);
+        memoryCache = {};
+    }
+    return memoryCache;
+}
+
+function persistCache() {
+    GM_setValue(STORAGE_KEYS.CACHE, JSON.stringify(memoryCache));
+}
+
+function evictCacheIfNeeded(ttlMs) {
+    const cache = loadCache();
+    const now = Date.now();
+    let dirty = false;
+
+    for (const key in cache) {
+        if (now - cache[key].timestamp > ttlMs) {
+            delete cache[key];
+            dirty = true;
+        }
+    }
+
+    if (Object.keys(cache).length > MAX_CACHE_SIZE) {
+        const entries = Object.entries(cache).sort((a, b) => a[1].timestamp - b[1].timestamp);
+        const toRemove = entries.length - MAX_CACHE_SIZE;
+        for (let i = 0; i < toRemove; i++) {
+            delete cache[entries[i][0]];
+            dirty = true;
+        }
+    }
+
+    if (dirty) persistCache();
+}
+
+function getCachedTranslation(cacheKey, ttlMs) {
+    const cache = loadCache();
+    const entry = cache[cacheKey];
+    if (entry && (Date.now() - entry.timestamp <= ttlMs)) {
+        return entry.text;
+    }
+    return null;
+}
+
+function setCachedTranslation(cacheKey, translatedText, ttlMs) {
+    evictCacheIfNeeded(ttlMs);
+    const cache = loadCache();
+    cache[cacheKey] = { text: translatedText, timestamp: Date.now() };
+    persistCache();
+}
+
+function clearCache() {
+    memoryCache = {};
+    GM_setValue(STORAGE_KEYS.CACHE, '');
+}
 
 let missingApiKeyShown = false;
 
@@ -440,7 +505,8 @@ function getSettings() {
         baseUrl: PRESETS.volcengine.baseUrl,
         model: PRESETS.volcengine.model,
         systemPrompt: DEFAULT_SYSTEM_PROMPT.trim(),
-        userPrompt: DEFAULT_USER_PROMPT.trim()
+        userPrompt: DEFAULT_USER_PROMPT.trim(),
+        cacheTTL: 24
     };
 
     try {
@@ -459,6 +525,7 @@ function getSettings() {
 function saveSettings(settings) {
     GM_setValue(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
 }
+
 
 // 清理和拼接 API Endpoint
 function cleanEndpoint(baseUrl) {
@@ -549,6 +616,10 @@ function createSettingsModal() {
                     </div>
                     <div class="xt-prompt-container" id="xt-prompt-container">
                         <div class="xt-form-group">
+                            <label class="xt-form-label">缓存有效期（小时）</label>
+                            <input type="number" id="xt-cache-ttl" class="xt-input" min="0" step="1" placeholder="24" value="${settings.cacheTTL}">
+                        </div>
+                        <div class="xt-form-group">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <label class="xt-form-label">System Prompt</label>
                                 <button class="xt-btn-reset" id="xt-reset-sys">恢复默认</button>
@@ -583,6 +654,7 @@ function createSettingsModal() {
     const modelInput = modalOverlay.querySelector('#xt-model');
     const sysPromptInput = modalOverlay.querySelector('#xt-sys-prompt');
     const userPromptInput = modalOverlay.querySelector('#xt-user-prompt');
+    const cacheTTLInput = modalOverlay.querySelector('#xt-cache-ttl');
     const promptToggle = modalOverlay.querySelector('#xt-prompt-toggle');
     const promptContainer = modalOverlay.querySelector('#xt-prompt-container');
     const promptArrow = modalOverlay.querySelector('#xt-prompt-arrow');
@@ -673,10 +745,12 @@ function createSettingsModal() {
             baseUrl,
             model,
             systemPrompt,
-            userPrompt
+            userPrompt,
+            cacheTTL: parseInt(cacheTTLInput.value) || 24
         };
 
         saveSettings(newSettings);
+        clearCache();
         closeModal();
         showToast('配置保存成功！刷新 X 页面后生效');
     });
@@ -701,6 +775,7 @@ function showSettingsModal() {
     modal.querySelector('#xt-model').value = settings.model;
     modal.querySelector('#xt-sys-prompt').value = settings.systemPrompt;
     modal.querySelector('#xt-user-prompt').value = settings.userPrompt;
+    modal.querySelector('#xt-cache-ttl').value = settings.cacheTTL;
 
     if (settings.provider !== 'custom') {
         modal.querySelector('#xt-base-url').setAttribute('readonly', 'true');
@@ -936,11 +1011,22 @@ function getTweetTextElement(tweetElement) {
     return { status: 'success', text, formattedText, element: textElement };
 }
 
-function translateText(text, originalElement) {
-    console.log('[X-Translate] Starting translation for text snippet:', text.substring(0, 30));
+function translateText(text, originalElement, cacheKey) {
     if (!text || text === 'No post text found') {
-        console.warn('[X-Translate] No valid text to translate');
         return;
+    }
+
+    const settings = getSettings();
+    const ttlMs = (settings.cacheTTL || 24) * 3600 * 1000;
+    cacheKey = cacheKey || text;
+
+    if (ttlMs > 0) {
+        const cached = getCachedTranslation(cacheKey, ttlMs);
+        if (cached) {
+            console.debug('[X-Translate] Cache hit for:', cacheKey.substring(0, 30));
+            setTranslation({ element: originalElement, translatedText: cached });
+            return;
+        }
     }
 
     const apiConfig = getApiConfig(originalElement);
@@ -975,6 +1061,7 @@ function translateText(text, originalElement) {
                     const responseJson = JSON.parse(response.responseText);
                     const translatedText = responseJson.choices?.[0]?.message?.content || 'Translation failed';
                     console.log('[X-Translate] Parsed translated text snippet:', translatedText.substring(0, 30));
+                    if (ttlMs > 0) setCachedTranslation(cacheKey, translatedText, ttlMs);
                     setTranslation({ element: originalElement, translatedText });
                 } catch (e) {
                     console.error('[X-Translate] Failed to parse response:', e, 'Raw response:', response.responseText);
@@ -984,9 +1071,9 @@ function translateText(text, originalElement) {
                 console.error('[X-Translate] API request failed with status:', response.status, 'Response:', response.responseText);
                 let errorMsg = '翻译失败，服务商接口返回错误。';
                 if (response.status === 401) {
-                    errorMsg += '（请点击“配置”检查 API Key 是否正确）';
+                    errorMsg += '（请点击”配置”检查 API Key 是否正确）';
                 } else if (response.status === 404) {
-                    errorMsg += '（请点击“配置”检查模型名称与 Endpoint URL 是否正确）';
+                    errorMsg += '（请点击”配置”检查模型名称与 Endpoint URL 是否正确）';
                 } else {
                     errorMsg += `(错误码: ${response.status})`;
                 }
@@ -1038,7 +1125,7 @@ function observeTweets() {
                     
                     if (hasMatches && (node.matches('article[data-testid="tweet"]') || node.matches('div[data-testid="tweet"]'))) {
                         if (node.getAttribute('data-xt-processed') !== 'true') {
-                            tweetObserver.observe(node);
+                            tweetVisibilityObserver.observe(node);
                         }
                     } else if (isElement && node.querySelector) {
                         const isExtensionElement = hasMatches && (
@@ -1086,7 +1173,7 @@ function processTweet(tweetElement, attempt = 0) {
         // 成功提取到符合条件的外语，标记为已处理，并进行翻译
         tweetElement.setAttribute('data-xt-processed', 'true');
         console.log(`[X-Translate] Capturing post on attempt ${attempt}:`, result.text.substring(0, 30));
-        translateText(result.formattedText || result.text, result.element);
+        translateText(result.formattedText || result.text, result.element, result.text);
     } else if (result.status === 'skip') {
         // 故意跳过的推文（中文或无翻译意义），打上标记直接离场，再也不处理它，极大节约计算资源
         tweetElement.setAttribute('data-xt-processed', 'true');
