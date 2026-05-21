@@ -39,17 +39,10 @@ const STYLES = {
     TRANSLATION_CONTAINER: {
         margin: '10px 0',
         padding: '12px 14px',
-        backgroundColor: 'rgba(0, 0, 0, 0.03)',
-        border: '1px solid rgba(0, 0, 0, 0.08)',
-        borderRadius: '12px',
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
         fontSize: '15px',
         lineHeight: '1.6',
-        color: 'inherit',
-        opacity: '0',
-        maxHeight: '0',
-        overflow: 'hidden',
-        transition: 'opacity 0.3s ease-in-out, max-height 0.3s ease-in-out'
+        color: 'inherit'
     }
 };
 
@@ -80,7 +73,7 @@ const PRESETS = {
 const DEFAULT_SYSTEM_PROMPT = `你是个超级人工智能助手`;
 
 const DEFAULT_USER_PROMPT = `处理说明：
-1. 将输入文本翻译为简体中文，只返回翻译结果，不包含任何解释或额外信息。
+1. 将输入文本翻译为简体中文，只返回翻译结果，不包含任何解释或额外信息。注意：保留原文的 Markdown 格式标记（如 **加粗**、*斜体*、链接等），并严格保留原文的段落结构（用空行分隔段落，不要将多个段落合并为一个段落）。
 2. 吐槽原帖子，使用百度贴吧臭嘴老哥风格，限制50字（纯娱乐，增加斗嘴效果）。
 3. 额外提炼3个值得学习的源语言单词或词汇，给出中文翻译、读音/音标和解释，限制50字。
 要求：分三步处理下面的文本，支持Markdown。
@@ -112,14 +105,21 @@ GM_addStyle(`
         overflow: hidden;
         transition: opacity 0.3s ease-in-out, max-height 0.3s ease-in-out;
         position: relative;
+        background-color: rgba(0, 0, 0, 0.03);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-left: 3px solid #1d9bf0;
+        border-radius: 12px;
+        overflow-wrap: break-word;
+        word-break: break-word;
     }
     .translation-container.show {
         opacity: 1;
         max-height: 1000px;
     }
     .translation-container.xt-dark {
-        background-color: rgba(255, 255, 255, 0.08);
+        background-color: rgba(255, 255, 255, 0.08) !important;
         border: 1px solid rgba(255, 255, 255, 0.22);
+        border-left: 3px solid #1d9bf0;
     }
     .translation-container h1, .translation-container h2, .translation-container h3,
     .translation-container h4, .translation-container h5, .translation-container h6 {
@@ -142,6 +142,8 @@ GM_addStyle(`
     .translation-container blockquote { border-left: 3px solid rgba(128, 128, 128, 0.4); margin: 8px 0; padding-left: 10px; opacity: 0.8; }
     .translation-container a { color: #1d9bf0; text-decoration: none; }
     .translation-container a:hover { text-decoration: underline; }
+    .translation-container strong { font-weight: 700; }
+    .translation-container em { font-style: italic; }
     .translation-container table { border-collapse: collapse; width: 100%; margin: 10px 0; }
     .translation-container th, .translation-container td { border: 1px solid rgba(128, 128, 128, 0.3); padding: 8px; }
     .translation-container th { background-color: rgba(128, 128, 128, 0.15); }
@@ -761,6 +763,51 @@ function getPlainText(element) {
     return text.replace(/\s+/g, ' ').trim();
 }
 
+// 工具函数：将 HTML 元素转为 Markdown，保留加粗、斜体、链接、换行等格式
+function htmlToMarkdown(element) {
+    if (!element) return '';
+
+    function processNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            return node.textContent || '';
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+        const tag = node.tagName.toLowerCase();
+        const children = Array.from(node.childNodes).map(processNode).join('');
+
+        switch (tag) {
+            case 'strong': case 'b':
+                return `**${children}**`;
+            case 'em': case 'i':
+                return `*${children}*`;
+            case 'a': {
+                const href = node.getAttribute('href') || '';
+                const text = node.textContent || '';
+                return href && text ? `[${text}](${href})` : text;
+            }
+            case 'br':
+                return '\n';
+            case 'p':
+                return `${children}\n\n`;
+            case 'code':
+                return `\`${children}\``;
+            case 'pre':
+                return `\`\`\`\n${children}\n\`\`\``;
+            case 'blockquote':
+                return children.split('\n').map(l => `> ${l}`).join('\n');
+            case 'ul':
+                return Array.from(node.children).map(li => `- ${Array.from(li.childNodes).map(processNode).join('')}`).join('\n') + '\n';
+            case 'ol':
+                return Array.from(node.children).map((li, i) => `${i + 1}. ${Array.from(li.childNodes).map(processNode).join('')}`).join('\n') + '\n';
+            default:
+                return children;
+        }
+    }
+
+    return Array.from(element.childNodes).map(processNode).join('').trim();
+}
+
 // 工具函数：设置翻译结果到元素，支持 Markdown
 function setTranslation({ element, translatedText }) {
     if (!element || !translatedText || translatedText === 'Translation failed') return;
@@ -789,27 +836,13 @@ function setTranslation({ element, translatedText }) {
     const translationContainer = document.createElement('div');
     translationContainer.className = 'translation-container';
 
-    // 根据配置设置初始状态
-    if (CONFIG.CARD.INITIAL_STATE === 'expanded') {
-        if (CONFIG.CARD.AUTO_EXPAND) {
-            setTimeout(() => {
-                translationContainer.classList.add('show');
-            }, CONFIG.CARD.EXPAND_DELAY);
-        }
-    }
-
     translationContainer.style.cssText = `
         margin: ${STYLES.TRANSLATION_CONTAINER.margin};
         padding: ${STYLES.TRANSLATION_CONTAINER.padding};
-        background-color: ${STYLES.TRANSLATION_CONTAINER.backgroundColor};
-        border: ${STYLES.TRANSLATION_CONTAINER.border};
-        border-radius: ${STYLES.TRANSLATION_CONTAINER.borderRadius};
         font-family: ${STYLES.TRANSLATION_CONTAINER.fontFamily};
         font-size: ${STYLES.TRANSLATION_CONTAINER.fontSize};
         line-height: ${STYLES.TRANSLATION_CONTAINER.lineHeight};
         color: ${STYLES.TRANSLATION_CONTAINER.color};
-        transition: opacity ${CONFIG.CARD.ANIMATION_DURATION}ms ease-in-out,
-                   max-height ${CONFIG.CARD.ANIMATION_DURATION}ms ease-in-out;
     `;
 
     try {
@@ -899,7 +932,8 @@ function getTweetTextElement(tweetElement) {
         return { status: 'skip', reason: 'no_translatable_char', text };
     }
     
-    return { status: 'success', text, element: textElement };
+    const formattedText = htmlToMarkdown(textElement);
+    return { status: 'success', text, formattedText, element: textElement };
 }
 
 function translateText(text, originalElement) {
@@ -1052,7 +1086,7 @@ function processTweet(tweetElement, attempt = 0) {
         // 成功提取到符合条件的外语，标记为已处理，并进行翻译
         tweetElement.setAttribute('data-xt-processed', 'true');
         console.log(`[X-Translate] Capturing post on attempt ${attempt}:`, result.text.substring(0, 30));
-        translateText(result.text, result.element);
+        translateText(result.formattedText || result.text, result.element);
     } else if (result.status === 'skip') {
         // 故意跳过的推文（中文或无翻译意义），打上标记直接离场，再也不处理它，极大节约计算资源
         tweetElement.setAttribute('data-xt-processed', 'true');
