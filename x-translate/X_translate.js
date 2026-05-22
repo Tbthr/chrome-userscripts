@@ -74,16 +74,12 @@ const DEFAULT_SYSTEM_PROMPT = `你是个超级人工智能助手`;
 
 const DEFAULT_USER_PROMPT = `处理说明：
 1. 将输入文本翻译为简体中文，只返回翻译结果，不包含任何解释或额外信息。注意：保留原文的 Markdown 格式标记（如 **加粗**、*斜体*、链接等），并严格保留原文的段落结构（用空行分隔段落，不要将多个段落合并为一个段落）。
-2. 吐槽原帖子，使用百度贴吧臭嘴老哥风格，限制50字（纯娱乐，增加斗嘴效果）。
-3. 额外提炼3个值得学习的源语言单词或词汇，给出中文翻译、读音/音标和解释，限制50字。
-要求：分三步处理下面的文本，支持Markdown。
+2. 额外提炼3个值得学习的源语言单词或词汇，给出中文翻译、读音/音标和解释，限制50字。
+要求：分两步处理下面的文本，支持Markdown。
 
 输出格式：
 ## 🤖 翻译
 [翻译内容]
-
-## 🗣️ 回复
-[回复内容]
 
 ## 📖 词汇
 [词汇内容]
@@ -1006,7 +1002,13 @@ function getTweetTextElement(tweetElement) {
     if (!hasTranslatableChar) {
         return { status: 'skip', reason: 'no_translatable_char', text };
     }
-    
+
+    // 3. \u8fc7\u6ee4\u77ed\u6587\u672c\uff1aword \u6570\u5c0f\u4e8e\u7b49\u4e8e 10 \u7684\u63a8\u6587\u4e0d\u7ffb\u8bd1\uff0c\u8282\u7ea6 API \u8c03\u7528
+    const wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
+    if (wordCount <= 10) {
+        return { status: 'skip', reason: 'too_short', text };
+    }
+
     const formattedText = htmlToMarkdown(textElement);
     return { status: 'success', text, formattedText, element: textElement };
 }
