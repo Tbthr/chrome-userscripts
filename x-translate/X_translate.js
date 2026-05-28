@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Translate X Post with AI (Markdown Support & Multi-Engine)
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.5
 // @description  Dynamically translate X posts using custom AI engines (Volcengine, DeepSeek, OpenAI, etc.) with Markdown support and beautiful settings modal.
 // @author       You
 // @match        https://x.com/*
@@ -14,10 +14,10 @@
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/npm/marked@5.1.2/marked.min.js
 // @require      https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js
-// @downloadURL  https://raw.githubusercontent.com/joeseesun/qiaomu-userscripts/main/%E6%8E%A8%E7%89%B9%E5%B8%96%E5%AD%90%E7%BF%BB%E8%AF%91/X%E7%BF%BB%E8%AF%91.js
-// @updateURL    https://raw.githubusercontent.com/joeseesun/qiaomu-userscripts/main/%E6%8E%A8%E7%89%B9%E5%B8%96%E5%AD%90%E7%BF%BB%E8%AF%91/X%E7%BF%BB%E8%AF%91.js
-// @homepageURL  https://github.com/joeseesun/qiaomu-userscripts
-// @supportURL   https://github.com/joeseesun/qiaomu-userscripts/issues
+// @downloadURL  https://raw.githubusercontent.com/Tbthr/chrome-userscripts/master/x-translate/X_translate.js
+// @updateURL    https://raw.githubusercontent.com/Tbthr/chrome-userscripts/master/x-translate/X_translate.js
+// @homepageURL  https://github.com/Tbthr/chrome-userscripts
+// @supportURL   https://github.com/Tbthr/chrome-userscripts/issues
 // ==/UserScript==
 
 // 用户配置选项
@@ -31,6 +31,8 @@ const CONFIG = {
         MAX_HEIGHT: '1000px'        // 展开时的最大高度
     }
 };
+
+const TRANSLATE_ICON_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>';
 
 console.log('[X-Translate] Script loaded and running on:', window.location.href);
 
@@ -491,6 +493,54 @@ GM_addStyle(`
     .xt-toast.show {
         transform: translateX(-50%) translateY(0);
     }
+
+    /* 翻译小图标 - 放在 time 元素旁边 */
+    .xt-translate-icon, .xt-remove-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: none;
+        border-radius: 50%;
+        cursor: pointer;
+        transition: background 0.2s ease, color 0.2s ease;
+        padding: 2px;
+        margin-left: 2px;
+        vertical-align: middle;
+        line-height: 1;
+        outline: none;
+    }
+    .xt-translate-icon {
+        color: #536471;
+    }
+    .xt-remove-icon {
+        color: #1d9bf0;
+    }
+    .xt-translate-icon:hover, .xt-remove-icon:hover {
+        background: rgba(29, 155, 240, 0.1);
+        color: #1d9bf0;
+    }
+    .xt-translate-icon.xt-dark {
+        color: #8b98a5;
+    }
+    .xt-remove-icon.xt-dark {
+        color: #4dabf7;
+    }
+    .xt-translate-icon.xt-dark:hover, .xt-remove-icon.xt-dark:hover {
+        background: rgba(29, 155, 240, 0.15);
+        color: #4dabf7;
+    }
+    .xt-translate-icon.loading {
+        opacity: 0.4;
+        pointer-events: none;
+    }
+    .xt-translate-icon.loading svg {
+        animation: xt-spin 1s linear infinite;
+    }
+    @keyframes xt-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
 `);
 
 // 默认配置加载器与保存逻辑
@@ -881,7 +931,7 @@ function htmlToMarkdown(element) {
 
 // 工具函数：设置翻译结果到元素，支持 Markdown
 function setTranslation({ element, translatedText }) {
-    if (!element || !translatedText || translatedText === 'Translation failed') return;
+    if (!element || !translatedText) return;
 
     // 检查是否已插入翻译，避免重复
     let nextElement = element.nextSibling;
@@ -967,6 +1017,74 @@ function getPostElements() {
     return document.querySelectorAll('article[data-testid="tweet"], div[data-testid="tweet"]');
 }
 
+// 注入翻译小图标到推文 time 元素旁边
+function injectTranslateButton(tweetElement) {
+    if (tweetElement.querySelector('.xt-translate-icon, .xt-remove-icon')) {
+        return;
+    }
+
+    const existingTranslation = tweetElement.querySelector('.translation-container');
+    const isDark = isDarkTheme();
+
+    const btn = document.createElement('button');
+    btn.className = existingTranslation ? 'xt-remove-icon' : 'xt-translate-icon';
+    if (isDark) btn.classList.add('xt-dark');
+
+    btn.innerHTML = TRANSLATE_ICON_SVG;
+    btn.title = existingTranslation ? '收起翻译' : '翻译';
+    btn.dataset.xtAction = existingTranslation ? 'remove' : 'translate';
+
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleTranslateClick(tweetElement, btn);
+    });
+
+    // 插入到 time 元素的父级 <a> 之后
+    const timeElement = tweetElement.querySelector('time');
+    if (!timeElement) return;
+
+    const timeAnchor = timeElement.closest('a') || timeElement;
+    timeAnchor.insertAdjacentElement('afterend', btn);
+}
+
+// 处理翻译图标点击
+function handleTranslateClick(tweetElement, btn) {
+    const action = btn.dataset.xtAction;
+
+    if (action === 'translate') {
+        btn.classList.add('loading');
+        btn.disabled = true;
+
+        const result = getTweetTextElement(tweetElement);
+        if (result.status === 'success') {
+            translateText(result.formattedText || result.text, result.element, result.text, () => {
+                btn.className = 'xt-remove-icon' + (isDarkTheme() ? ' xt-dark' : '');
+                btn.innerHTML = TRANSLATE_ICON_SVG;
+                btn.title = '收起翻译';
+                btn.dataset.xtAction = 'remove';
+                btn.disabled = false;
+            });
+        } else {
+            btn.classList.remove('loading');
+            btn.disabled = false;
+            if (result.status === 'skip' && result.reason === 'contains_chinese') {
+                showToast('中文内容无需翻译');
+            }
+        }
+    } else if (action === 'remove') {
+        const card = tweetElement.querySelector('.translation-container');
+        if (card) {
+            card.classList.remove('show');
+            setTimeout(() => card.remove(), 300);
+        }
+        btn.className = 'xt-translate-icon' + (isDarkTheme() ? ' xt-dark' : '');
+        btn.innerHTML = TRANSLATE_ICON_SVG;
+        btn.title = '翻译';
+        btn.dataset.xtAction = 'translate';
+    }
+}
+
 // 获取推文文本并过滤（精细化状态机，完美过滤中文与非翻译文本）
 function getTweetTextElement(tweetElement) {
     const selectors = [
@@ -1003,18 +1121,13 @@ function getTweetTextElement(tweetElement) {
         return { status: 'skip', reason: 'no_translatable_char', text };
     }
 
-    // 3. \u8fc7\u6ee4\u77ed\u6587\u672c\uff1aword \u6570\u5c0f\u4e8e\u7b49\u4e8e 10 \u7684\u63a8\u6587\u4e0d\u7ffb\u8bd1\uff0c\u8282\u7ea6 API \u8c03\u7528
-    const wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
-    if (wordCount <= 10) {
-        return { status: 'skip', reason: 'too_short', text };
-    }
-
     const formattedText = htmlToMarkdown(textElement);
     return { status: 'success', text, formattedText, element: textElement };
 }
 
-function translateText(text, originalElement, cacheKey) {
+function translateText(text, originalElement, cacheKey, onCompleteCallback) {
     if (!text || text === 'No post text found') {
+        if (onCompleteCallback) onCompleteCallback();
         return;
     }
 
@@ -1027,12 +1140,13 @@ function translateText(text, originalElement, cacheKey) {
         if (cached) {
             console.debug('[X-Translate] Cache hit for:', cacheKey.substring(0, 30));
             setTranslation({ element: originalElement, translatedText: cached });
+            if (onCompleteCallback) onCompleteCallback();
             return;
         }
     }
 
     const apiConfig = getApiConfig(originalElement);
-    if (!apiConfig) return;
+    if (!apiConfig) { if (onCompleteCallback) onCompleteCallback(); return; }
 
     const combinedInput = `${apiConfig.userPrompt}${text}`;
 
@@ -1041,12 +1155,27 @@ function translateText(text, originalElement, cacheKey) {
         messages: [
             {"role": "system", "content": apiConfig.systemPrompt},
             {"role": "user", "content": combinedInput}
-        ]
+        ],
+        stream: true
     };
 
     const targetEndpoint = cleanEndpoint(apiConfig.baseUrl);
 
     console.log('[X-Translate] Sending GM.xmlHttpRequest to:', targetEndpoint, 'with model:', apiConfig.model);
+
+    function parseSSEResponse(responseText) {
+        let fullText = '';
+        for (const line of responseText.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed === 'data: [DONE]' || !trimmed.startsWith('data: ')) continue;
+            try {
+                const json = JSON.parse(trimmed.slice(6));
+                fullText += json.choices?.[0]?.delta?.content || '';
+            } catch (_) {}
+        }
+        return fullText;
+    }
+
     GM.xmlHttpRequest({
         method: 'POST',
         url: targetEndpoint,
@@ -1055,43 +1184,64 @@ function translateText(text, originalElement, cacheKey) {
             'Authorization': `Bearer ${apiConfig.apiKey}`
         },
         data: JSON.stringify(requestBody),
-        timeout: 10000,
+        timeout: 30000,
         onload: function(response) {
             console.log('[X-Translate] GM.xmlHttpRequest response status:', response.status);
             if (response.status === 200) {
                 try {
-                    const responseJson = JSON.parse(response.responseText);
-                    const translatedText = responseJson.choices?.[0]?.message?.content || 'Translation failed';
+                    const isSSE = response.responseText.trimStart().startsWith('data: ');
+                    let translatedText;
+                    if (isSSE) {
+                        translatedText = parseSSEResponse(response.responseText);
+                    } else {
+                        const responseJson = JSON.parse(response.responseText);
+                        translatedText = responseJson.choices?.[0]?.message?.content || '';
+                    }
+                    if (!translatedText) translatedText = 'Translation failed';
                     console.log('[X-Translate] Parsed translated text snippet:', translatedText.substring(0, 30));
                     if (ttlMs > 0) setCachedTranslation(cacheKey, translatedText, ttlMs);
                     setTranslation({ element: originalElement, translatedText });
+                    if (onCompleteCallback) onCompleteCallback();
                 } catch (e) {
                     console.error('[X-Translate] Failed to parse response:', e, 'Raw response:', response.responseText);
                     setTranslation({ element: originalElement, translatedText: '解析 API 响应失败，请重试。' });
+                    if (onCompleteCallback) onCompleteCallback();
                 }
             } else {
                 console.error('[X-Translate] API request failed with status:', response.status, 'Response:', response.responseText);
                 let errorMsg = '翻译失败，服务商接口返回错误。';
                 if (response.status === 401) {
-                    errorMsg += '（请点击”配置”检查 API Key 是否正确）';
+                    errorMsg += '（请点击"配置"检查 API Key 是否正确）';
                 } else if (response.status === 404) {
-                    errorMsg += '（请点击”配置”检查模型名称与 Endpoint URL 是否正确）';
+                    errorMsg += '（请点击"配置"检查模型名称与 Endpoint URL 是否正确）';
+                } else if (response.status === 400) {
+                    try {
+                        const errJson = JSON.parse(response.responseText);
+                        errorMsg += `（${errJson.error?.message || response.status}）`;
+                    } catch (_) {
+                        errorMsg += `(错误码: ${response.status})`;
+                    }
                 } else {
                     errorMsg += `(错误码: ${response.status})`;
                 }
                 setTranslation({ element: originalElement, translatedText: errorMsg });
+                if (onCompleteCallback) onCompleteCallback();
             }
         },
         onerror: function(error) {
             console.error('[X-Translate] GM.xmlHttpRequest error:', error);
             setTranslation({ element: originalElement, translatedText: '网络请求错误，请检查您的网络连接或接口地址是否可用。' });
+            if (onCompleteCallback) onCompleteCallback();
         },
         onabort: function() {
             console.error('[X-Translate] GM.xmlHttpRequest aborted');
+            setTranslation({ element: originalElement, translatedText: '请求已中止。' });
+            if (onCompleteCallback) onCompleteCallback();
         },
         ontimeout: function() {
             console.error('[X-Translate] GM.xmlHttpRequest timed out');
             setTranslation({ element: originalElement, translatedText: '请求超时，请检查接口服务响应速度或您的加速网络。' });
+            if (onCompleteCallback) onCompleteCallback();
         }
     });
 }
@@ -1124,18 +1274,20 @@ function observeTweets() {
                 mutation.addedNodes.forEach(node => {
                     const isElement = node.nodeType === Node.ELEMENT_NODE;
                     const hasMatches = isElement && typeof node.matches === 'function';
-                    
+
                     if (hasMatches && (node.matches('article[data-testid="tweet"]') || node.matches('div[data-testid="tweet"]'))) {
                         if (node.getAttribute('data-xt-processed') !== 'true') {
                             tweetVisibilityObserver.observe(node);
                         }
                     } else if (isElement && node.querySelector) {
                         const isExtensionElement = hasMatches && (
-                            node.matches('div.translation-container') || 
-                            node.matches('div.xt-modal-overlay') || 
-                            node.matches('div.xt-toast')
+                            node.matches('div.translation-container') ||
+                            node.matches('div.xt-modal-overlay') ||
+                            node.matches('div.xt-toast') ||
+                            node.matches('.xt-translate-icon') ||
+                            node.matches('.xt-remove-icon')
                         );
-                        
+
                         if (!isExtensionElement) {
                             const tweets = Array.from(node.querySelectorAll('article[data-testid="tweet"], div[data-testid="tweet"]'))
                                 .filter(tweet => tweet.getAttribute('data-xt-processed') !== 'true');
@@ -1163,7 +1315,7 @@ function observeTweets() {
     });
 }
 
-// 状态化推文捕获处理，具备高度生命周期保护，彻底解决重复处理和不必要的 CPU 消耗
+// 状态化推文捕获处理，注入翻译按钮
 function processTweet(tweetElement, attempt = 0) {
     if (tweetElement.getAttribute('data-xt-processed') === 'true') {
         return;
@@ -1172,21 +1324,21 @@ function processTweet(tweetElement, attempt = 0) {
     const result = getTweetTextElement(tweetElement);
 
     if (result.status === 'success') {
-        // 成功提取到符合条件的外语，标记为已处理，并进行翻译
         tweetElement.setAttribute('data-xt-processed', 'true');
-        console.log(`[X-Translate] Capturing post on attempt ${attempt}:`, result.text.substring(0, 30));
-        translateText(result.formattedText || result.text, result.element, result.text);
+        console.log(`[X-Translate] Scheduling translate button:`, result.text.substring(0, 30));
+        // 延迟注入，等待 React 完成当前渲染周期
+        requestAnimationFrame(() => {
+            setTimeout(() => injectTranslateButton(tweetElement), 200);
+        });
     } else if (result.status === 'skip') {
-        // 故意跳过的推文（中文或无翻译意义），打上标记直接离场，再也不处理它，极大节约计算资源
         tweetElement.setAttribute('data-xt-processed', 'true');
-        console.log(`[X-Translate] Skipping post (attempt ${attempt}): Reason = ${result.reason}, text = ${result.text.substring(0, 30)}`);
+        console.log(`[X-Translate] Skipping post:`, result.reason, result.text.substring(0, 30));
     } else if (result.status === 'retry') {
         if (attempt < 4) {
             setTimeout(() => processTweet(tweetElement, attempt + 1), 300);
         } else {
-            // 重试 5 次依然未加载到 DOM 节点的，也打上标记离场，避免陷入死循环重试
             tweetElement.setAttribute('data-xt-processed', 'true');
-            console.log('[X-Translate] Tweet text container not found after 5 attempts, giving up.');
+            console.log('[X-Translate] Tweet text container not found after 5 attempts');
         }
     }
 }
