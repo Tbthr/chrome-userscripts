@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Translate X Post with AI (Markdown Support & Multi-Engine)
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.8
 // @description  Dynamically translate X posts using custom AI engines (Volcengine, DeepSeek, OpenAI, etc.) with Markdown support and beautiful settings modal.
 // @author       You
 // @match        https://x.com/*
 // @match        https://twitter.com/*
+// @connect      *
 // @grant        GM.xmlHttpRequest
 // @grant        GM_addStyle
 // @grant        GM_getValue
@@ -21,16 +22,7 @@
 // ==/UserScript==
 
 // 用户配置选项
-const CONFIG = {
-    // 卡片展示配置
-    CARD: {
-        AUTO_EXPAND: true,          // 是否自动展开翻译卡片
-        EXPAND_DELAY: 1000,          // 自动展开延迟时间（毫秒）
-        INITIAL_STATE: 'expanded',  // 初始状态：'expanded' 或 'collapsed'
-        ANIMATION_DURATION: 300,    // 动画持续时间（毫秒）
-        MAX_HEIGHT: '1000px'        // 展开时的最大高度
-    }
-};
+const CONFIG = {};
 
 const TRANSLATE_ICON_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>';
 
@@ -48,45 +40,25 @@ const STYLES = {
     }
 };
 
-// 预设配置
-const PRESETS = {
-    volcengine: {
-        name: '火山方舟',
-        baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-        model: 'ep-20250222222029-sx6sd'
-    },
-    deepseek: {
-        name: 'DeepSeek',
-        baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-chat'
-    },
-    openai: {
-        name: 'OpenAI',
-        baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-4o-mini'
-    },
-    custom: {
-        name: '自定义',
-        baseUrl: '',
-        model: ''
-    }
-};
+const DEFAULT_SYSTEM_PROMPT = `你是一名专业的翻译官，精通中英文互译`;
 
-const DEFAULT_SYSTEM_PROMPT = `你是个超级人工智能助手`;
+const DEFAULT_USER_PROMPT = `将输入文本重写为简体中文，最大化保留原文语义`;
 
-const DEFAULT_USER_PROMPT = `处理说明：
-1. 将输入文本翻译为简体中文，只返回翻译结果，不包含任何解释或额外信息。注意：保留原文的 Markdown 格式标记（如 **加粗**、*斜体*、链接等），并严格保留原文的段落结构（用空行分隔段落，不要将多个段落合并为一个段落）。
-2. 额外提炼3个值得学习的源语言单词或词汇，给出中文翻译、读音/音标和解释，限制50字。
-要求：分两步处理下面的文本，支持Markdown。
+const USER_PROMPT_INPUT_LABEL = '处理文本：';
 
-输出格式：
-## 🤖 翻译
-[翻译内容]
+const TRANSLATION_MODES = Object.freeze({
+    AUTO: 'auto',
+    VIEWPORT: 'viewport',
+    MANUAL: 'manual'
+});
 
-## 📖 词汇
-[词汇内容]
+const DEFAULT_TRANSLATION_MODE = TRANSLATION_MODES.VIEWPORT;
 
-处理文本：`;
+const TRANSLATION_MODE_OPTIONS = [
+    { value: TRANSLATION_MODES.AUTO, label: '全自动' },
+    { value: TRANSLATION_MODES.VIEWPORT, label: '当前视图' },
+    { value: TRANSLATION_MODES.MANUAL, label: '手动点击' }
+];
 
 const STORAGE_KEYS = {
     SETTINGS: 'x_translate_settings_v3',
@@ -219,13 +191,15 @@ GM_addStyle(`
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(0, 0, 0, 0.5);
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.58);
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
         z-index: 100000;
         display: flex;
         align-items: center;
         justify-content: center;
+        box-sizing: border-box;
         opacity: 0;
         pointer-events: none;
         transition: opacity 0.3s ease;
@@ -241,11 +215,10 @@ GM_addStyle(`
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
         border: 1px solid rgba(255, 255, 255, 0.4);
-        border-radius: 20px;
-        width: 90%;
-        max-width: 500px;
-        max-height: 90vh;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+        border-radius: 22px;
+        width: min(100%, 560px);
+        max-height: min(760px, calc(100vh - 48px));
+        box-shadow: 0 24px 70px rgba(0,0,0,0.22);
         display: flex;
         flex-direction: column;
         transform: scale(0.95);
@@ -257,72 +230,106 @@ GM_addStyle(`
     .xt-modal-overlay.show .xt-modal {
         transform: scale(1);
     }
+    .xt-modal button {
+        font-family: inherit;
+    }
 
     /* 暗黑模式自适应 */
     .xt-modal-overlay.xt-dark .xt-modal {
-        background: rgba(21, 32, 43, 0.9);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(21, 32, 43, 0.94);
+        border: 1px solid rgba(255, 255, 255, 0.12);
         color: #e7e9ea;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        box-shadow: 0 24px 70px rgba(0,0,0,0.52);
     }
 
     .xt-modal-header {
-        padding: 20px 24px;
+        padding: 22px 28px;
         border-bottom: 1px solid rgba(128, 128, 128, 0.15);
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 16px;
+        flex: 0 0 auto;
     }
     .xt-modal-title {
-        font-size: 20px;
+        font-size: 21px;
         font-weight: 700;
         margin: 0;
+        letter-spacing: 0;
+        line-height: 1.25;
     }
     .xt-modal-close {
-        background: none;
-        border: none;
-        font-size: 28px;
+        width: 36px;
+        height: 36px;
+        background: rgba(128, 128, 128, 0.1);
+        border: 1px solid rgba(128, 128, 128, 0.12);
+        border-radius: 50%;
+        font-size: 26px;
         cursor: pointer;
         color: inherit;
         opacity: 0.6;
-        transition: opacity 0.2s;
+        transition: opacity 0.2s, background 0.2s, transform 0.2s;
         padding: 0;
         line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
     }
     .xt-modal-close:hover {
         opacity: 1;
+        background: rgba(128, 128, 128, 0.18);
+        transform: scale(1.04);
+    }
+    .xt-modal-close:focus-visible,
+    .xt-eye-btn:focus-visible,
+    .xt-segmented-option:focus-visible,
+    .xt-prompt-toggle:focus-visible,
+    .xt-btn:focus-visible {
+        outline: 2px solid #1d9bf0;
+        outline-offset: 2px;
     }
     
     .xt-modal-body {
-        padding: 20px 24px;
+        padding: 22px 28px 24px;
         overflow-y: auto;
-        flex: 1;
+        flex: 1 1 auto;
+        min-height: 0;
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 18px;
+        scrollbar-width: thin;
     }
     .xt-form-group {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 8px;
     }
     .xt-form-label {
-        font-size: 13px;
+        font-size: 13.5px;
         font-weight: 700;
         opacity: 0.9;
+        line-height: 1.35;
     }
     
     .xt-input, .xt-select, .xt-textarea {
         width: 100%;
-        padding: 10px 12px;
-        border-radius: 8px;
+        padding: 12px 14px;
+        border-radius: 12px;
         border: 1px solid rgba(128, 128, 128, 0.3);
         background: rgba(255, 255, 255, 0.5);
         color: inherit;
         font-family: inherit;
-        font-size: 14px;
-        transition: all 0.2s ease;
+        font-size: 15px;
+        line-height: 1.45;
+        transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
         box-sizing: border-box;
+    }
+    .xt-input {
+        min-height: 48px;
+    }
+    .xt-textarea {
+        min-height: 96px;
     }
     .xt-modal-overlay.xt-dark .xt-input,
     .xt-modal-overlay.xt-dark .xt-select,
@@ -348,50 +355,75 @@ GM_addStyle(`
         cursor: not-allowed;
     }
 
-    .xt-providers {
+    .xt-segmented {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 8px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+        padding: 5px;
+        border: 1px solid rgba(128, 128, 128, 0.16);
+        border-radius: 14px;
+        background: rgba(128, 128, 128, 0.08);
     }
-    .xt-provider-btn {
-        padding: 10px 4px;
-        border-radius: 8px;
-        border: 1px solid rgba(128, 128, 128, 0.25);
-        background: rgba(128, 128, 128, 0.05);
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 700;
-        text-align: center;
+    .xt-segmented-option {
+        min-width: 0;
+        min-height: 40px;
+        padding: 8px 10px;
+        border: none;
+        border-radius: 10px;
+        background: transparent;
         color: inherit;
-        transition: all 0.2s ease;
+        cursor: pointer;
+        font-size: 13.5px;
+        font-weight: 700;
+        line-height: 1.25;
+        transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
     }
-    .xt-provider-btn:hover {
+    .xt-segmented-option:hover {
         background: rgba(128, 128, 128, 0.12);
     }
-    .xt-provider-btn.active {
-        border-color: #1d9bf0;
-        background: rgba(29, 155, 240, 0.12);
-        color: #1d9bf0;
-        box-shadow: 0 0 0 1px #1d9bf0;
+    .xt-segmented-option.active {
+        background: #1d9bf0;
+        color: #ffffff;
+        box-shadow: 0 4px 12px rgba(29, 155, 240, 0.24);
     }
+    .xt-modal-overlay.xt-dark .xt-segmented {
+        background: rgba(0, 0, 0, 0.18);
+        border-color: rgba(255, 255, 255, 0.1);
+    }
+
 
     .xt-prompt-toggle {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 12px;
         cursor: pointer;
-        font-size: 13px;
+        width: 100%;
+        font-size: 14px;
         font-weight: 700;
-        padding: 10px 0;
+        padding: 14px 0 0;
+        border: 0;
         border-top: 1px solid rgba(128, 128, 128, 0.15);
         margin-top: 8px;
         user-select: none;
+        color: inherit;
+        background: transparent;
+        text-align: left;
+    }
+    .xt-prompt-toggle span:first-child {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+    .xt-prompt-arrow {
+        color: #1d9bf0;
+        flex: 0 0 auto;
+        font-size: 13px;
     }
     .xt-prompt-container {
         display: none;
         flex-direction: column;
-        gap: 12px;
-        margin-top: 4px;
+        gap: 16px;
+        margin-top: 14px;
         animation: xt-slide-down 0.2s ease-out;
     }
     .xt-prompt-container.show {
@@ -404,20 +436,30 @@ GM_addStyle(`
     }
 
     .xt-modal-footer {
-        padding: 16px 24px;
+        padding: 18px 28px 22px;
         border-top: 1px solid rgba(128, 128, 128, 0.15);
         display: flex;
         justify-content: flex-end;
-        gap: 12px;
+        gap: 14px;
+        flex: 0 0 auto;
+        background: rgba(255, 255, 255, 0.68);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+    }
+    .xt-modal-overlay.xt-dark .xt-modal-footer {
+        background: rgba(21, 32, 43, 0.78);
     }
     .xt-btn {
-        padding: 10px 22px;
+        min-width: 108px;
+        min-height: 46px;
+        padding: 11px 22px;
         border-radius: 9999px;
         font-weight: 700;
-        font-size: 14px;
+        font-size: 15px;
         cursor: pointer;
         transition: all 0.2s ease;
         border: none;
+        box-sizing: border-box;
     }
     .xt-btn-cancel {
         background: transparent;
@@ -455,22 +497,52 @@ GM_addStyle(`
         align-items: center;
     }
     .xt-api-key-container .xt-input {
-        padding-right: 42px;
+        padding-right: 50px;
     }
     .xt-eye-btn {
         position: absolute;
-        right: 12px;
-        background: none;
+        right: 8px;
+        width: 36px;
+        height: 36px;
+        background: transparent;
         border: none;
+        border-radius: 50%;
         cursor: pointer;
         color: inherit;
         opacity: 0.5;
-        transition: opacity 0.2s ease;
+        transition: opacity 0.2s ease, background 0.2s ease;
         padding: 0;
         font-size: 16px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
     }
     .xt-eye-btn:hover {
         opacity: 1;
+        background: rgba(128, 128, 128, 0.12);
+    }
+
+    @media (max-width: 520px) {
+        .xt-modal-overlay {
+            align-items: flex-end;
+            padding: 12px;
+        }
+        .xt-modal {
+            border-radius: 18px;
+            max-height: calc(100vh - 24px);
+        }
+        .xt-modal-header,
+        .xt-modal-body {
+            padding-left: 18px;
+            padding-right: 18px;
+        }
+        .xt-modal-footer {
+            padding: 14px 18px 18px;
+        }
+        .xt-btn {
+            flex: 1 1 0;
+            min-width: 0;
+        }
     }
 
     /* Toast 通知 */
@@ -544,22 +616,39 @@ GM_addStyle(`
 `);
 
 // 默认配置加载器与保存逻辑
+function normalizeUserPrompt(userPrompt) {
+    return String(userPrompt ?? '')
+        .replace(/\s*处理文本[:：]\s*$/, '')
+        .trim();
+}
+
+function normalizeTranslationMode(mode) {
+    return TRANSLATION_MODE_OPTIONS.some(option => option.value === mode)
+        ? mode
+        : DEFAULT_TRANSLATION_MODE;
+}
+
 function getSettings() {
     const defaultSettings = {
-        provider: 'volcengine',
         apiKey: '',
-        baseUrl: PRESETS.volcengine.baseUrl,
-        model: PRESETS.volcengine.model,
+        baseUrl: '',
+        model: '',
         systemPrompt: DEFAULT_SYSTEM_PROMPT.trim(),
         userPrompt: DEFAULT_USER_PROMPT.trim(),
-        cacheTTL: 24
+        cacheTTL: 24,
+        translationMode: DEFAULT_TRANSLATION_MODE
     };
 
     try {
         const stored = GM_getValue(STORAGE_KEYS.SETTINGS, '');
         if (stored) {
             const parsed = JSON.parse(stored);
-            return { ...defaultSettings, ...parsed };
+            const settings = { ...defaultSettings, ...parsed };
+            return {
+                ...settings,
+                userPrompt: normalizeUserPrompt(settings.userPrompt),
+                translationMode: normalizeTranslationMode(settings.translationMode)
+            };
         }
     } catch (e) {
         console.error('[X-Translate] Failed to parse stored settings:', e);
@@ -569,7 +658,12 @@ function getSettings() {
 
 // 供快捷存储
 function saveSettings(settings) {
-    GM_setValue(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    const normalizedSettings = {
+        ...settings,
+        userPrompt: normalizeUserPrompt(settings.userPrompt),
+        translationMode: normalizeTranslationMode(settings.translationMode)
+    };
+    GM_setValue(STORAGE_KEYS.SETTINGS, JSON.stringify(normalizedSettings));
 }
 
 
@@ -599,6 +693,55 @@ function isDarkTheme() {
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function renderSegmentedOptions(options, selectedValue) {
+    return options.map(option => {
+        const isSelected = option.value === selectedValue;
+        return `
+            <button
+                class="xt-segmented-option ${isSelected ? 'active' : ''}"
+                type="button"
+                data-value="${escapeHtml(option.value)}"
+                aria-pressed="${isSelected ? 'true' : 'false'}"
+            >${escapeHtml(option.label)}</button>
+        `;
+    }).join('');
+}
+
+function setSegmentedControlValue(container, value) {
+    if (!container) return;
+    const buttons = Array.from(container.querySelectorAll('.xt-segmented-option'));
+    buttons.forEach(button => {
+        const isSelected = button.dataset.value === value;
+        button.classList.toggle('active', isSelected);
+        button.setAttribute('aria-pressed', String(isSelected));
+    });
+}
+
+function getSegmentedControlValue(container, fallbackValue) {
+    if (!container) return fallbackValue;
+    const activeButton = container.querySelector('.xt-segmented-option.active');
+    return activeButton?.dataset.value || fallbackValue;
+}
+
+function bindSegmentedControl(container, initialValue) {
+    if (!container) return;
+    setSegmentedControlValue(container, initialValue);
+    container.addEventListener('click', (event) => {
+        const button = event.target.closest('.xt-segmented-option');
+        if (!button || !container.contains(button)) return;
+        setSegmentedControlValue(container, button.dataset.value);
+    });
+}
+
 // 配置面板 DOM 动态管理
 let modalOverlay = null;
 
@@ -619,72 +762,78 @@ function createSettingsModal() {
     }
 
     const settings = getSettings();
+    const safeSettings = {
+        apiKey: escapeHtml(settings.apiKey),
+        baseUrl: escapeHtml(settings.baseUrl),
+        model: escapeHtml(settings.model),
+        systemPrompt: escapeHtml(settings.systemPrompt),
+        userPrompt: escapeHtml(settings.userPrompt),
+        cacheTTL: escapeHtml(settings.cacheTTL),
+        translationMode: normalizeTranslationMode(settings.translationMode)
+    };
 
     modalOverlay.innerHTML = `
         <div class="xt-modal">
             <div class="xt-modal-header">
                 <h3 class="xt-modal-title">🤖 X AI 翻译配置</h3>
-                <button class="xt-modal-close" id="xt-close-btn">×</button>
+                <button class="xt-modal-close" id="xt-close-btn" type="button" aria-label="关闭设置">×</button>
             </div>
             <div class="xt-modal-body">
                 <div class="xt-form-group">
-                    <label class="xt-form-label">服务商 (Provider)</label>
-                    <div class="xt-providers">
-                        <button class="xt-provider-btn ${settings.provider === 'volcengine' ? 'active' : ''}" data-provider="volcengine">火山方舟</button>
-                        <button class="xt-provider-btn ${settings.provider === 'deepseek' ? 'active' : ''}" data-provider="deepseek">DeepSeek</button>
-                        <button class="xt-provider-btn ${settings.provider === 'openai' ? 'active' : ''}" data-provider="openai">OpenAI</button>
-                        <button class="xt-provider-btn ${settings.provider === 'custom' ? 'active' : ''}" data-provider="custom">自定义</button>
-                    </div>
-                </div>
-
-                <div class="xt-form-group">
                     <label class="xt-form-label">API Key</label>
                     <div class="xt-api-key-container">
-                        <input type="password" id="xt-api-key" class="xt-input" placeholder="输入 API 密钥 (API Key)" value="${settings.apiKey}">
-                        <button class="xt-eye-btn" id="xt-eye-toggle">👁️</button>
+                        <input type="password" id="xt-api-key" class="xt-input" placeholder="输入 API 密钥 (API Key)" value="${safeSettings.apiKey}" autocomplete="off">
+                        <button class="xt-eye-btn" id="xt-eye-toggle" type="button" aria-label="显示 API Key">👁️</button>
                     </div>
                 </div>
 
                 <div class="xt-form-group">
                     <label class="xt-form-label">接口地址 (Base URL / Endpoint)</label>
-                    <input type="text" id="xt-base-url" class="xt-input" placeholder="https://api.openai.com/v1" value="${settings.baseUrl}" ${settings.provider !== 'custom' ? 'readonly' : ''}>
+                    <input type="text" id="xt-base-url" class="xt-input" placeholder="https://api.openai.com/v1" value="${safeSettings.baseUrl}" autocomplete="off">
                 </div>
 
                 <div class="xt-form-group">
                     <label class="xt-form-label">模型 (Model / Endpoint ID)</label>
-                    <input type="text" id="xt-model" class="xt-input" placeholder="gpt-4o-mini" value="${settings.model}" ${settings.provider !== 'custom' ? 'readonly' : ''}>
+                    <input type="text" id="xt-model" class="xt-input" placeholder="gpt-4o-mini" value="${safeSettings.model}" autocomplete="off">
+                </div>
+
+                <div class="xt-form-group">
+                    <label class="xt-form-label">翻译模式</label>
+                    <div class="xt-segmented" id="xt-translation-mode" role="group" aria-label="翻译模式">
+                        ${renderSegmentedOptions(TRANSLATION_MODE_OPTIONS, safeSettings.translationMode)}
+                    </div>
                 </div>
 
                 <div>
-                    <div class="xt-prompt-toggle" id="xt-prompt-toggle">
+                    <button class="xt-prompt-toggle" id="xt-prompt-toggle" type="button" aria-expanded="false">
                         <span>高级选项：自定义翻译提示词 (Prompts)</span>
-                        <span id="xt-prompt-arrow">▼</span>
-                    </div>
+                        <span class="xt-prompt-arrow" id="xt-prompt-arrow">▼</span>
+                    </button>
                     <div class="xt-prompt-container" id="xt-prompt-container">
                         <div class="xt-form-group">
                             <label class="xt-form-label">缓存有效期（小时）</label>
-                            <input type="number" id="xt-cache-ttl" class="xt-input" min="0" step="1" placeholder="24" value="${settings.cacheTTL}">
+                            <input type="number" id="xt-cache-ttl" class="xt-input" min="0" step="1" placeholder="24" value="${safeSettings.cacheTTL}">
                         </div>
                         <div class="xt-form-group">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <label class="xt-form-label">System Prompt</label>
-                                <button class="xt-btn-reset" id="xt-reset-sys">恢复默认</button>
+                                <button class="xt-btn-reset" id="xt-reset-sys" type="button">恢复默认</button>
                             </div>
-                            <textarea id="xt-sys-prompt" class="xt-textarea" rows="2" style="resize:vertical;">${settings.systemPrompt}</textarea>
+                            <textarea id="xt-sys-prompt" class="xt-textarea" rows="2" style="resize:vertical;">${safeSettings.systemPrompt}</textarea>
                         </div>
                         <div class="xt-form-group">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <label class="xt-form-label">User Prompt</label>
-                                <button class="xt-btn-reset" id="xt-reset-user">恢复默认</button>
+                                <label class="xt-form-label">User Prompt（自定义部分）</label>
+                                <button class="xt-btn-reset" id="xt-reset-user" type="button">恢复默认</button>
                             </div>
-                            <textarea id="xt-user-prompt" class="xt-textarea" rows="6" style="resize:vertical;">${settings.userPrompt}</textarea>
+                            <textarea id="xt-user-prompt" class="xt-textarea" rows="4" style="resize:vertical;">${safeSettings.userPrompt}</textarea>
                         </div>
                     </div>
                 </div>
             </div>
             <div class="xt-modal-footer">
-                <button class="xt-btn xt-btn-cancel" id="xt-cancel-btn">取消</button>
-                <button class="xt-btn xt-btn-save" id="xt-save-btn">保存配置</button>
+                <button class="xt-btn xt-btn-cancel" id="xt-cancel-btn" type="button">取消</button>
+                <button class="xt-btn xt-btn-save" id="xt-save-btn" type="button">保存配置</button>
             </div>
         </div>
     `;
@@ -698,6 +847,7 @@ function createSettingsModal() {
     const apiKeyInput = modalOverlay.querySelector('#xt-api-key');
     const baseUrlInput = modalOverlay.querySelector('#xt-base-url');
     const modelInput = modalOverlay.querySelector('#xt-model');
+    const translationModeControl = modalOverlay.querySelector('#xt-translation-mode');
     const sysPromptInput = modalOverlay.querySelector('#xt-sys-prompt');
     const userPromptInput = modalOverlay.querySelector('#xt-user-prompt');
     const cacheTTLInput = modalOverlay.querySelector('#xt-cache-ttl');
@@ -707,45 +857,24 @@ function createSettingsModal() {
     const resetSysBtn = modalOverlay.querySelector('#xt-reset-sys');
     const resetUserBtn = modalOverlay.querySelector('#xt-reset-user');
     
-    let activeProvider = settings.provider;
-
-    const providerBtns = modalOverlay.querySelectorAll('.xt-provider-btn');
-    providerBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            providerBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            activeProvider = btn.dataset.provider;
-
-            if (activeProvider !== 'custom') {
-                const preset = PRESETS[activeProvider];
-                baseUrlInput.value = preset.baseUrl;
-                modelInput.value = preset.model;
-                baseUrlInput.setAttribute('readonly', 'true');
-                modelInput.setAttribute('readonly', 'true');
-            } else {
-                baseUrlInput.removeAttribute('readonly');
-                modelInput.removeAttribute('readonly');
-                if (settings.provider !== 'custom') {
-                    baseUrlInput.value = '';
-                    modelInput.value = '';
-                }
-            }
-        });
-    });
+    bindSegmentedControl(translationModeControl, settings.translationMode);
 
     eyeToggle.addEventListener('click', () => {
         if (apiKeyInput.type === 'password') {
             apiKeyInput.type = 'text';
             eyeToggle.textContent = '🔒';
+            eyeToggle.setAttribute('aria-label', '隐藏 API Key');
         } else {
             apiKeyInput.type = 'password';
             eyeToggle.textContent = '👁️';
+            eyeToggle.setAttribute('aria-label', '显示 API Key');
         }
     });
 
     promptToggle.addEventListener('click', () => {
         const isShown = promptContainer.classList.toggle('show');
         promptArrow.textContent = isShown ? '▲' : '▼';
+        promptToggle.setAttribute('aria-expanded', String(isShown));
     });
 
     resetSysBtn.addEventListener('click', () => {
@@ -770,7 +899,8 @@ function createSettingsModal() {
         const baseUrl = baseUrlInput.value.trim();
         const model = modelInput.value.trim();
         const systemPrompt = sysPromptInput.value.trim();
-        const userPrompt = userPromptInput.value.trim();
+        const userPrompt = normalizeUserPrompt(userPromptInput.value);
+        const translationMode = getSegmentedControlValue(translationModeControl, DEFAULT_TRANSLATION_MODE);
 
         if (!apiKey) {
             alert('API Key 不能为空。');
@@ -786,13 +916,13 @@ function createSettingsModal() {
         }
 
         const newSettings = {
-            provider: activeProvider,
             apiKey,
             baseUrl,
             model,
             systemPrompt,
             userPrompt,
-            cacheTTL: parseInt(cacheTTLInput.value) || 24
+            cacheTTL: parseInt(cacheTTLInput.value) || 24,
+            translationMode
         };
 
         saveSettings(newSettings);
@@ -802,34 +932,39 @@ function createSettingsModal() {
     });
 }
 
+function populateSettingsModal(settings) {
+    if (!modalOverlay) return;
+
+    const apiKeyInput = modalOverlay.querySelector('#xt-api-key');
+    const eyeToggle = modalOverlay.querySelector('#xt-eye-toggle');
+    const baseUrlInput = modalOverlay.querySelector('#xt-base-url');
+    const modelInput = modalOverlay.querySelector('#xt-model');
+    const translationModeControl = modalOverlay.querySelector('#xt-translation-mode');
+    const sysPromptInput = modalOverlay.querySelector('#xt-sys-prompt');
+    const userPromptInput = modalOverlay.querySelector('#xt-user-prompt');
+    const cacheTTLInput = modalOverlay.querySelector('#xt-cache-ttl');
+
+    if (apiKeyInput) {
+        apiKeyInput.value = settings.apiKey;
+        apiKeyInput.type = 'password';
+    }
+    if (eyeToggle) {
+        eyeToggle.textContent = '👁️';
+        eyeToggle.setAttribute('aria-label', '显示 API Key');
+    }
+    if (baseUrlInput) baseUrlInput.value = settings.baseUrl;
+    if (modelInput) modelInput.value = settings.model;
+    setSegmentedControlValue(translationModeControl, normalizeTranslationMode(settings.translationMode));
+    if (sysPromptInput) sysPromptInput.value = settings.systemPrompt;
+    if (userPromptInput) userPromptInput.value = settings.userPrompt;
+    if (cacheTTLInput) cacheTTLInput.value = settings.cacheTTL;
+}
+
 function showSettingsModal() {
     createSettingsModal();
     const settings = getSettings();
     const modal = modalOverlay;
-    
-    const providerBtns = modal.querySelectorAll('.xt-provider-btn');
-    providerBtns.forEach(btn => {
-        if (btn.dataset.provider === settings.provider) {
-            btn.classList.add('active');
-        } else {
-            btn.classList.remove('active');
-        }
-    });
-
-    modal.querySelector('#xt-api-key').value = settings.apiKey;
-    modal.querySelector('#xt-base-url').value = settings.baseUrl;
-    modal.querySelector('#xt-model').value = settings.model;
-    modal.querySelector('#xt-sys-prompt').value = settings.systemPrompt;
-    modal.querySelector('#xt-user-prompt').value = settings.userPrompt;
-    modal.querySelector('#xt-cache-ttl').value = settings.cacheTTL;
-
-    if (settings.provider !== 'custom') {
-        modal.querySelector('#xt-base-url').setAttribute('readonly', 'true');
-        modal.querySelector('#xt-model').setAttribute('readonly', 'true');
-    } else {
-        modal.querySelector('#xt-base-url').removeAttribute('readonly');
-        modal.querySelector('#xt-model').removeAttribute('readonly');
-    }
+    populateSettingsModal(settings);
 
     setTimeout(() => {
         modal.classList.add('show');
@@ -864,7 +999,7 @@ function getApiConfig(originalElement) {
         missingApiKeyShown = true;
         setTranslation({
             element: originalElement,
-            translatedText: '请先配置 AI 翻译 API 接口以开始自动翻译。'
+            translatedText: '请先配置 AI 翻译 API 接口以开始翻译。'
         });
 
         setTimeout(() => {
@@ -875,6 +1010,13 @@ function getApiConfig(originalElement) {
     }
 
     return null;
+}
+
+function buildTranslationUserMessage(customPrompt, text) {
+    const prompt = normalizeUserPrompt(customPrompt);
+    return prompt
+        ? `${prompt}\n\n${USER_PROMPT_INPUT_LABEL}\n${text}`
+        : `${USER_PROMPT_INPUT_LABEL}\n${text}`;
 }
 
 // 工具函数：提取纯文本
@@ -933,15 +1075,6 @@ function htmlToMarkdown(element) {
 function setTranslation({ element, translatedText }) {
     if (!element || !translatedText) return;
 
-    // 检查是否已插入翻译，避免重复
-    let nextElement = element.nextSibling;
-    while (nextElement) {
-        if (nextElement.nodeType === Node.ELEMENT_NODE && nextElement.classList && nextElement.classList.contains('translation-container')) {
-            console.log('[X-Translate] Translation already exists, skipping...');
-            return;
-        }
-        nextElement = nextElement.nextSibling;
-    }
 
     // 检查父元素的所有子元素
     if (element.parentNode) {
@@ -1018,21 +1151,49 @@ function getPostElements() {
 }
 
 // 注入翻译小图标到推文 time 元素旁边
+// 获取推文唯一指纹（用于检测虚拟滚动 DOM 复用）
+function getTweetFingerprint(tweetElement) {
+    const timeElement = tweetElement.querySelector('time');
+    if (!timeElement) return null;
+    const anchor = timeElement.closest('a');
+    return anchor ? anchor.href : null;
+}
+
+// 清除推文上挂载的脚本元素（翻译按钮、翻译卡片、处理标记）
+function cleanupTweetState(tweetElement) {
+    const btn = tweetElement.querySelector('.xt-translate-icon, .xt-remove-icon');
+    if (btn) btn.remove();
+    const container = tweetElement.querySelector('.translation-container');
+    if (container) container.remove();
+    tweetElement.removeAttribute('data-xt-processed');
+    tweetElement.removeAttribute('data-xt-fingerprint');
+    tweetElement.removeAttribute('data-xt-translating');
+}
+
+function getTranslateButton(tweetElement) {
+    return tweetElement.querySelector('.xt-translate-icon, .xt-remove-icon');
+}
+
+function setTranslateButtonState(btn, action, isLoading = false) {
+    if (!btn) return;
+    btn.className = (action === 'remove' ? 'xt-remove-icon' : 'xt-translate-icon') + (isDarkTheme() ? ' xt-dark' : '');
+    btn.innerHTML = TRANSLATE_ICON_SVG;
+    btn.title = action === 'remove' ? '收起翻译' : '翻译';
+    btn.dataset.xtAction = action;
+    btn.disabled = isLoading;
+    btn.classList.toggle('loading', isLoading);
+}
+
 function injectTranslateButton(tweetElement) {
-    if (tweetElement.querySelector('.xt-translate-icon, .xt-remove-icon')) {
-        return;
+    const existingButton = getTranslateButton(tweetElement);
+    if (existingButton) {
+        return existingButton;
     }
 
     const existingTranslation = tweetElement.querySelector('.translation-container');
-    const isDark = isDarkTheme();
 
     const btn = document.createElement('button');
-    btn.className = existingTranslation ? 'xt-remove-icon' : 'xt-translate-icon';
-    if (isDark) btn.classList.add('xt-dark');
-
-    btn.innerHTML = TRANSLATE_ICON_SVG;
-    btn.title = existingTranslation ? '收起翻译' : '翻译';
-    btn.dataset.xtAction = existingTranslation ? 'remove' : 'translate';
+    setTranslateButtonState(btn, existingTranslation ? 'remove' : 'translate');
 
     btn.addEventListener('click', (e) => {
         e.preventDefault();
@@ -1046,6 +1207,49 @@ function injectTranslateButton(tweetElement) {
 
     const timeAnchor = timeElement.closest('a') || timeElement;
     timeAnchor.insertAdjacentElement('afterend', btn);
+    return btn;
+}
+
+function shouldAutoTranslate(mode) {
+    const translationMode = normalizeTranslationMode(mode);
+    return translationMode === TRANSLATION_MODES.AUTO || translationMode === TRANSLATION_MODES.VIEWPORT;
+}
+
+function startTweetTranslation(tweetElement, result = null, btn = getTranslateButton(tweetElement), options = {}) {
+    if (tweetElement.querySelector('.translation-container')) {
+        setTranslateButtonState(btn, 'remove');
+        return { status: 'already_translated' };
+    }
+    if (tweetElement.getAttribute('data-xt-translating') === 'true') {
+        return { status: 'translating' };
+    }
+
+    const translationResult = result || getTweetTextElement(tweetElement);
+    if (translationResult.status !== 'success') {
+        if (translationResult.status === 'skip' && options.showSkipToast && translationResult.reason === 'contains_chinese') {
+            showToast('中文内容无需翻译');
+        }
+        return translationResult;
+    }
+
+    tweetElement.setAttribute('data-xt-translating', 'true');
+    setTranslateButtonState(btn, 'translate', true);
+
+    translateText(translationResult.formattedText || translationResult.text, translationResult.element, translationResult.text, () => {
+        tweetElement.removeAttribute('data-xt-translating');
+        setTranslateButtonState(btn, 'remove');
+    });
+
+    return { status: 'started' };
+}
+
+function removeTweetTranslation(tweetElement, btn = getTranslateButton(tweetElement)) {
+    const card = tweetElement.querySelector('.translation-container');
+    if (card) {
+        card.classList.remove('show');
+        setTimeout(() => card.remove(), 300);
+    }
+    setTranslateButtonState(btn, 'translate');
 }
 
 // 处理翻译图标点击
@@ -1053,35 +1257,9 @@ function handleTranslateClick(tweetElement, btn) {
     const action = btn.dataset.xtAction;
 
     if (action === 'translate') {
-        btn.classList.add('loading');
-        btn.disabled = true;
-
-        const result = getTweetTextElement(tweetElement);
-        if (result.status === 'success') {
-            translateText(result.formattedText || result.text, result.element, result.text, () => {
-                btn.className = 'xt-remove-icon' + (isDarkTheme() ? ' xt-dark' : '');
-                btn.innerHTML = TRANSLATE_ICON_SVG;
-                btn.title = '收起翻译';
-                btn.dataset.xtAction = 'remove';
-                btn.disabled = false;
-            });
-        } else {
-            btn.classList.remove('loading');
-            btn.disabled = false;
-            if (result.status === 'skip' && result.reason === 'contains_chinese') {
-                showToast('中文内容无需翻译');
-            }
-        }
+        startTweetTranslation(tweetElement, null, btn, { showSkipToast: true });
     } else if (action === 'remove') {
-        const card = tweetElement.querySelector('.translation-container');
-        if (card) {
-            card.classList.remove('show');
-            setTimeout(() => card.remove(), 300);
-        }
-        btn.className = 'xt-translate-icon' + (isDarkTheme() ? ' xt-dark' : '');
-        btn.innerHTML = TRANSLATE_ICON_SVG;
-        btn.title = '翻译';
-        btn.dataset.xtAction = 'translate';
+        removeTweetTranslation(tweetElement, btn);
     }
 }
 
@@ -1109,8 +1287,9 @@ function getTweetTextElement(tweetElement) {
         return { status: 'retry' };
     }
     
-    // 1. 严格过滤中文：只要含有中文字符，则不翻译，不发起任何 API 请求
-    if (/[\u4e00-\u9fa5]/.test(text)) {
+    // 1. 中文内容过滤：中文字符超过 3 个则跳过，所有翻译模式统一生效
+    const chineseCharCount = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    if (chineseCharCount > 3) {
         return { status: 'skip', reason: 'contains_chinese', text };
     }
     
@@ -1148,7 +1327,7 @@ function translateText(text, originalElement, cacheKey, onCompleteCallback) {
     const apiConfig = getApiConfig(originalElement);
     if (!apiConfig) { if (onCompleteCallback) onCompleteCallback(); return; }
 
-    const combinedInput = `${apiConfig.userPrompt}${text}`;
+    const combinedInput = buildTranslationUserMessage(apiConfig.userPrompt, text);
 
     const requestBody = {
         model: apiConfig.model,
@@ -1160,20 +1339,88 @@ function translateText(text, originalElement, cacheKey, onCompleteCallback) {
     };
 
     const targetEndpoint = cleanEndpoint(apiConfig.baseUrl);
-
     console.log('[X-Translate] Sending GM.xmlHttpRequest to:', targetEndpoint, 'with model:', apiConfig.model);
 
-    function parseSSEResponse(responseText) {
-        let fullText = '';
-        for (const line of responseText.split('\n')) {
+    // 创建流式翻译容器（立即可见，逐字填充）
+    const translationContainer = document.createElement('div');
+    translationContainer.className = 'translation-container';
+    translationContainer.style.cssText = `
+        margin: ${STYLES.TRANSLATION_CONTAINER.margin};
+        padding: ${STYLES.TRANSLATION_CONTAINER.padding};
+        font-family: ${STYLES.TRANSLATION_CONTAINER.fontFamily};
+        font-size: ${STYLES.TRANSLATION_CONTAINER.fontSize};
+        line-height: ${STYLES.TRANSLATION_CONTAINER.lineHeight};
+        color: ${STYLES.TRANSLATION_CONTAINER.color};
+    `;
+    if (isDarkTheme()) translationContainer.classList.add('xt-dark');
+
+    const parent = originalElement.parentNode;
+    if (parent) {
+        const nextSibling = originalElement.nextSibling;
+        if (nextSibling) {
+            parent.insertBefore(translationContainer, nextSibling);
+        } else {
+            parent.appendChild(translationContainer);
+        }
+        requestAnimationFrame(() => translationContainer.classList.add('show'));
+    }
+
+    // 流式状态
+    let accumulatedText = '';
+    let lastParsedIndex = 0;
+    let streamingWorked = false;
+
+    // 从累积的 SSE 文本中增量解析新的 delta content
+    function parseNewSSEChunks(fullResponseText) {
+        const newText = fullResponseText.substring(lastParsedIndex);
+        lastParsedIndex = fullResponseText.length;
+        const lines = newText.split('\n');
+        for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed || trimmed === 'data: [DONE]' || !trimmed.startsWith('data: ')) continue;
             try {
                 const json = JSON.parse(trimmed.slice(6));
-                fullText += json.choices?.[0]?.delta?.content || '';
-            } catch (_) {}
+                const delta = json.choices?.[0]?.delta?.content || '';
+                if (delta) accumulatedText += delta;
+            } catch (_) {
+                // 不完整的 JSON 行，可能跨越 chunk 边界，下次 onprogress 会补全
+            }
         }
-        return fullText;
+    }
+
+    // 流式渲染：用纯文本实时更新，避免不完整 Markdown 解析异常
+    function updateStreamingContent() {
+        if (!accumulatedText) {
+            translationContainer.innerHTML = '<span style="opacity:0.5">翻译中…</span>';
+            return;
+        }
+        const escaped = accumulatedText
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br>');
+        translationContainer.innerHTML = escaped;
+    }
+
+    // 最终渲染：用 marked 做完整 Markdown 渲染
+    function finalizeTranslation() {
+        if (!accumulatedText) {
+            translationContainer.innerHTML = 'Translation failed';
+            return;
+        }
+        try {
+            if (typeof marked !== 'undefined') {
+                marked.setOptions({ breaks: true, gfm: true, headerIds: false, mangle: false });
+                const rawHtml = marked.parse(accumulatedText);
+                translationContainer.innerHTML = typeof DOMPurify !== 'undefined'
+                    ? DOMPurify.sanitize(rawHtml) : rawHtml;
+            } else {
+                translationContainer.innerHTML = accumulatedText.replace(/\n/g, '<br>');
+            }
+        } catch (e) {
+            console.error('[X-Translate] Error rendering final Markdown:', e);
+            translationContainer.innerHTML = accumulatedText.replace(/\n/g, '<br>');
+        }
     }
 
     GM.xmlHttpRequest({
@@ -1185,28 +1432,39 @@ function translateText(text, originalElement, cacheKey, onCompleteCallback) {
         },
         data: JSON.stringify(requestBody),
         timeout: 30000,
+        onprogress: function(response) {
+            if (!response.responseText) return;
+            streamingWorked = true;
+            parseNewSSEChunks(response.responseText);
+            updateStreamingContent();
+        },
         onload: function(response) {
             console.log('[X-Translate] GM.xmlHttpRequest response status:', response.status);
             if (response.status === 200) {
-                try {
-                    const isSSE = response.responseText.trimStart().startsWith('data: ');
-                    let translatedText;
-                    if (isSSE) {
-                        translatedText = parseSSEResponse(response.responseText);
-                    } else {
-                        const responseJson = JSON.parse(response.responseText);
-                        translatedText = responseJson.choices?.[0]?.message?.content || '';
+                // 如果 onprogress 已正常工作，accumulatedText 已有内容，直接最终渲染
+                if (streamingWorked && accumulatedText) {
+                    finalizeTranslation();
+                } else {
+                    // onprogress 未提供 responseText（部分 TM 版本），在此兜底解析
+                    try {
+                        const isSSE = response.responseText.trimStart().startsWith('data: ');
+                        if (isSSE) {
+                            parseNewSSEChunks(response.responseText);
+                            accumulatedText = accumulatedText || '';
+                        } else {
+                            const responseJson = JSON.parse(response.responseText);
+                            accumulatedText = responseJson.choices?.[0]?.message?.content || '';
+                        }
+                        if (!accumulatedText) accumulatedText = 'Translation failed';
+                        finalizeTranslation();
+                    } catch (e) {
+                        console.error('[X-Translate] Failed to parse response:', e, 'Raw:', response.responseText);
+                        translationContainer.innerHTML = '解析 API 响应失败，请重试。';
                     }
-                    if (!translatedText) translatedText = 'Translation failed';
-                    console.log('[X-Translate] Parsed translated text snippet:', translatedText.substring(0, 30));
-                    if (ttlMs > 0) setCachedTranslation(cacheKey, translatedText, ttlMs);
-                    setTranslation({ element: originalElement, translatedText });
-                    if (onCompleteCallback) onCompleteCallback();
-                } catch (e) {
-                    console.error('[X-Translate] Failed to parse response:', e, 'Raw response:', response.responseText);
-                    setTranslation({ element: originalElement, translatedText: '解析 API 响应失败，请重试。' });
-                    if (onCompleteCallback) onCompleteCallback();
                 }
+                console.log('[X-Translate] Translated text snippet:', accumulatedText.substring(0, 30));
+                if (ttlMs > 0 && accumulatedText) setCachedTranslation(cacheKey, accumulatedText, ttlMs);
+                if (onCompleteCallback) onCompleteCallback();
             } else {
                 console.error('[X-Translate] API request failed with status:', response.status, 'Response:', response.responseText);
                 let errorMsg = '翻译失败，服务商接口返回错误。';
@@ -1224,23 +1482,23 @@ function translateText(text, originalElement, cacheKey, onCompleteCallback) {
                 } else {
                     errorMsg += `(错误码: ${response.status})`;
                 }
-                setTranslation({ element: originalElement, translatedText: errorMsg });
+                translationContainer.innerHTML = errorMsg;
                 if (onCompleteCallback) onCompleteCallback();
             }
         },
         onerror: function(error) {
             console.error('[X-Translate] GM.xmlHttpRequest error:', error);
-            setTranslation({ element: originalElement, translatedText: '网络请求错误，请检查您的网络连接或接口地址是否可用。' });
+            translationContainer.innerHTML = '网络请求错误，请检查您的网络连接或接口地址是否可用。';
             if (onCompleteCallback) onCompleteCallback();
         },
         onabort: function() {
             console.error('[X-Translate] GM.xmlHttpRequest aborted');
-            setTranslation({ element: originalElement, translatedText: '请求已中止。' });
+            translationContainer.innerHTML = '请求已中止。';
             if (onCompleteCallback) onCompleteCallback();
         },
         ontimeout: function() {
             console.error('[X-Translate] GM.xmlHttpRequest timed out');
-            setTranslation({ element: originalElement, translatedText: '请求超时，请检查接口服务响应速度或您的加速网络。' });
+            translationContainer.innerHTML = '请求超时，请检查接口服务响应速度或您的加速网络。';
             if (onCompleteCallback) onCompleteCallback();
         }
     });
@@ -1251,15 +1509,23 @@ const tweetVisibilityObserver = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
         if (entry.isIntersecting) {
             const tweetEl = entry.target;
-            if (tweetEl.getAttribute('data-xt-processed') !== 'true') {
-                processTweet(tweetEl);
-            }
+            processTweet(tweetEl, 0, getSettings().translationMode);
         }
     });
 }, {
     root: null,
     threshold: 0.1
 });
+
+function queueTweetForProcessing(tweetElement, mode = getSettings().translationMode) {
+    const translationMode = normalizeTranslationMode(mode);
+    if (translationMode === TRANSLATION_MODES.AUTO) {
+        processTweet(tweetElement, 0, translationMode);
+        return;
+    }
+    tweetVisibilityObserver.observe(tweetElement);
+}
+
 function observeTweets() {
     const targetNode = document.querySelector('main') || document.body;
     if (!targetNode) {
@@ -1270,6 +1536,7 @@ function observeTweets() {
 
     const observer = new MutationObserver((mutations) => {
         mutations.forEach(mutation => {
+            const translationMode = getSettings().translationMode;
             if (mutation.addedNodes.length) {
                 mutation.addedNodes.forEach(node => {
                     const isElement = node.nodeType === Node.ELEMENT_NODE;
@@ -1277,7 +1544,7 @@ function observeTweets() {
 
                     if (hasMatches && (node.matches('article[data-testid="tweet"]') || node.matches('div[data-testid="tweet"]'))) {
                         if (node.getAttribute('data-xt-processed') !== 'true') {
-                            tweetVisibilityObserver.observe(node);
+                            queueTweetForProcessing(node, translationMode);
                         }
                     } else if (isElement && node.querySelector) {
                         const isExtensionElement = hasMatches && (
@@ -1292,7 +1559,7 @@ function observeTweets() {
                             const tweets = Array.from(node.querySelectorAll('article[data-testid="tweet"], div[data-testid="tweet"]'))
                                 .filter(tweet => tweet.getAttribute('data-xt-processed') !== 'true');
                             if (tweets.length > 0) {
-                                tweets.forEach(tweet => tweetVisibilityObserver.observe(tweet));
+                                tweets.forEach(tweet => queueTweetForProcessing(tweet, translationMode));
                             }
                         }
                     }
@@ -1308,36 +1575,55 @@ function observeTweets() {
 
     // 初始处理现有帖子
     console.log('[X-Translate] Processing existing tweets on page load...');
+    const translationMode = getSettings().translationMode;
     getPostElements().forEach(tweet => {
         if (tweet.getAttribute('data-xt-processed') !== 'true') {
-            tweetVisibilityObserver.observe(tweet);
+            queueTweetForProcessing(tweet, translationMode);
         }
     });
 }
 
 // 状态化推文捕获处理，注入翻译按钮
-function processTweet(tweetElement, attempt = 0) {
+function processTweet(tweetElement, attempt = 0, mode = getSettings().translationMode) {
+    const translationMode = normalizeTranslationMode(mode);
+    const currentFingerprint = getTweetFingerprint(tweetElement);
+    const storedFingerprint = tweetElement.getAttribute('data-xt-fingerprint');
+
     if (tweetElement.getAttribute('data-xt-processed') === 'true') {
-        return;
+        // 已处理过：检查指纹是否变化（虚拟滚动导致 DOM 复用）
+        if (storedFingerprint && currentFingerprint && storedFingerprint !== currentFingerprint) {
+            console.log('[X-Translate] DOM recycled, fingerprint changed. Re-processing tweet.');
+            cleanupTweetState(tweetElement);
+        } else {
+            return;
+        }
     }
 
     const result = getTweetTextElement(tweetElement);
 
     if (result.status === 'success') {
         tweetElement.setAttribute('data-xt-processed', 'true');
+        if (currentFingerprint) tweetElement.setAttribute('data-xt-fingerprint', currentFingerprint);
         console.log(`[X-Translate] Scheduling translate button:`, result.text.substring(0, 30));
         // 延迟注入，等待 React 完成当前渲染周期
         requestAnimationFrame(() => {
-            setTimeout(() => injectTranslateButton(tweetElement), 200);
+            setTimeout(() => {
+                const btn = injectTranslateButton(tweetElement);
+                if (shouldAutoTranslate(translationMode)) {
+                    startTweetTranslation(tweetElement, result, btn);
+                }
+            }, 200);
         });
     } else if (result.status === 'skip') {
         tweetElement.setAttribute('data-xt-processed', 'true');
+        if (currentFingerprint) tweetElement.setAttribute('data-xt-fingerprint', currentFingerprint);
         console.log(`[X-Translate] Skipping post:`, result.reason, result.text.substring(0, 30));
     } else if (result.status === 'retry') {
         if (attempt < 4) {
-            setTimeout(() => processTweet(tweetElement, attempt + 1), 300);
+            setTimeout(() => processTweet(tweetElement, attempt + 1, translationMode), 300);
         } else {
             tweetElement.setAttribute('data-xt-processed', 'true');
+            if (currentFingerprint) tweetElement.setAttribute('data-xt-fingerprint', currentFingerprint);
             console.log('[X-Translate] Tweet text container not found after 5 attempts');
         }
     }
