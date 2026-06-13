@@ -1150,6 +1150,45 @@ function getPostElements() {
     return document.querySelectorAll('article[data-testid="tweet"], div[data-testid="tweet"]');
 }
 
+function hasXArticleCard(tweetElement) {
+    const cardWrapper = tweetElement.querySelector('[data-testid="card.wrapper"]');
+    if (!cardWrapper) return false;
+
+    const cardText = getPlainText(cardWrapper);
+    return /(^|\s)X\s*文章(\s|$)/.test(cardText);
+}
+
+function getChineseCharCount(text) {
+    return (text.match(/[\u3400-\u9fff]/g) || []).length;
+}
+
+function hasChineseChar(text) {
+    return getChineseCharCount(text) > 0;
+}
+
+function hasNonChineseTranslatableChar(text) {
+    return /[a-zA-Z\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(text);
+}
+
+function getNonChineseWordCount(text) {
+    const nonChineseText = text.replace(/[\u3400-\u9fff]/g, ' ');
+    const words = nonChineseText.match(/[a-zA-Z0-9]+(?:['’-][a-zA-Z0-9]+)?|[\u3040-\u30ff]+|[\uac00-\ud7af]+|[\u0400-\u04ff]+/g);
+    return words ? words.length : 0;
+}
+
+function getAutoTranslationEligibility(text) {
+    if (hasChineseChar(text)) {
+        return { eligible: false, reason: 'contains_chinese' };
+    }
+
+    const nonChineseWordCount = getNonChineseWordCount(text);
+    if (nonChineseWordCount <= 3) {
+        return { eligible: false, reason: 'not_enough_non_chinese_words', nonChineseWordCount };
+    }
+
+    return { eligible: true, nonChineseWordCount };
+}
+
 // 注入翻译小图标到推文 time 元素旁边
 // 获取推文唯一指纹（用于检测虚拟滚动 DOM 复用）
 function getTweetFingerprint(tweetElement) {
@@ -1232,6 +1271,17 @@ function startTweetTranslation(tweetElement, result = null, btn = getTranslateBu
         return translationResult;
     }
 
+    if (!options.force) {
+        const eligibility = getAutoTranslationEligibility(translationResult.text);
+        if (!eligibility.eligible) {
+            return {
+                status: 'skip',
+                reason: eligibility.reason,
+                text: translationResult.text
+            };
+        }
+    }
+
     tweetElement.setAttribute('data-xt-translating', 'true');
     setTranslateButtonState(btn, 'translate', true);
 
@@ -1257,7 +1307,7 @@ function handleTranslateClick(tweetElement, btn) {
     const action = btn.dataset.xtAction;
 
     if (action === 'translate') {
-        startTweetTranslation(tweetElement, null, btn, { showSkipToast: true });
+        startTweetTranslation(tweetElement, null, btn, { force: true, showSkipToast: true });
     } else if (action === 'remove') {
         removeTweetTranslation(tweetElement, btn);
     }
@@ -1265,10 +1315,12 @@ function handleTranslateClick(tweetElement, btn) {
 
 // 获取推文文本并过滤（精细化状态机，完美过滤中文与非翻译文本）
 function getTweetTextElement(tweetElement) {
+    if (hasXArticleCard(tweetElement)) {
+        return { status: 'skip', reason: 'x_article_card', text: '' };
+    }
+
     const selectors = [
         'div[data-testid="tweetText"]',
-        'div.css-146c3p1.r-bcqeeo.r-1ttztb7',
-        'span[data-testid="tweet-text"]',
         'div[data-testid="newTweetText"]'
     ];
     
@@ -1287,17 +1339,9 @@ function getTweetTextElement(tweetElement) {
         return { status: 'retry' };
     }
     
-    // 1. 中文内容过滤：中文字符超过 3 个则跳过，所有翻译模式统一生效
-    const chineseCharCount = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
-    if (chineseCharCount > 3) {
-        return { status: 'skip', reason: 'contains_chinese', text };
-    }
-    
-    // 2. 过滤无翻译意义的推文：纯数字、纯符号、纯 Emoji 等（要求至少含有一个有效的外语字母/符号）
-    // 包含：拉丁字母、日文平假名/片假名、韩文、西里尔字母
-    const hasTranslatableChar = /[a-zA-Z\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(text);
-    if (!hasTranslatableChar) {
-        return { status: 'skip', reason: 'no_translatable_char', text };
+    // 按钮注入只判断是否存在可翻译的非中文字符；自动翻译资格在 startTweetTranslation 中判断。
+    if (!hasNonChineseTranslatableChar(text)) {
+        return { status: 'skip', reason: 'no_non_chinese_translatable_char', text };
     }
 
     const formattedText = htmlToMarkdown(textElement);
