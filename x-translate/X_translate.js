@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Translate X Post with AI (Markdown Support & Multi-Engine)
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.12
 // @description  Dynamically translate X posts using custom AI engines (Volcengine, DeepSeek, OpenAI, etc.) with Markdown support and beautiful settings modal.
 // @author       You
 // @match        https://x.com/*
@@ -25,6 +25,7 @@
 const CONFIG = {};
 
 const TRANSLATE_ICON_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>';
+const SCROLL_TOP_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 5.5l-7 7 1.4 1.4L11 9.3V20h2V9.3l4.6 4.6L19 12.5z"/></svg>';
 
 console.log('[X-Translate] Script loaded and running on:', window.location.href);
 
@@ -285,7 +286,8 @@ GM_addStyle(`
     .xt-eye-btn:focus-visible,
     .xt-segmented-option:focus-visible,
     .xt-prompt-toggle:focus-visible,
-    .xt-btn:focus-visible {
+    .xt-btn:focus-visible,
+    .xt-scroll-top-button:focus-visible {
         outline: 2px solid #1d9bf0;
         outline-offset: 2px;
     }
@@ -608,6 +610,64 @@ GM_addStyle(`
     }
     .xt-translate-icon.loading svg {
         animation: xt-spin 1s linear infinite;
+    }
+
+    .xt-scroll-top-button {
+        position: fixed;
+        bottom: 88px;
+        left: var(--xt-scroll-top-left, auto);
+        right: var(--xt-scroll-top-right, 18px);
+        width: 42px;
+        height: 42px;
+        border: 1px solid rgba(15, 20, 25, 0.1);
+        border-radius: 50%;
+        background: rgba(15, 20, 25, 0.88);
+        color: #ffffff;
+        z-index: 99999;
+        cursor: pointer;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(8px);
+        transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    }
+    .xt-scroll-top-button.show {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
+    }
+    .xt-scroll-top-button:hover {
+        background: #1d9bf0;
+        border-color: #1d9bf0;
+        transform: translateY(-1px);
+    }
+    .xt-scroll-top-button:active {
+        transform: translateY(0);
+    }
+    .xt-scroll-top-button.xt-dark {
+        background: rgba(239, 243, 244, 0.92);
+        color: #0f1419;
+        border-color: rgba(255, 255, 255, 0.16);
+    }
+    .xt-scroll-top-button.xt-dark:hover {
+        background: #1d9bf0;
+        color: #ffffff;
+        border-color: #1d9bf0;
+    }
+    .xt-scroll-top-button svg {
+        width: 20px;
+        height: 20px;
+    }
+    @media (max-width: 720px) {
+        .xt-scroll-top-button {
+            left: auto !important;
+            right: 16px;
+            bottom: 78px;
+        }
     }
     @keyframes xt-spin {
         from { transform: rotate(0deg); }
@@ -987,6 +1047,170 @@ function showToast(message) {
 
 if (typeof GM_registerMenuCommand === 'function') {
     GM_registerMenuCommand('⚙️ 配置 AI 翻译 API', showSettingsModal);
+}
+
+let scrollTopButton = null;
+let scrollTopUpdateFrame = null;
+let scrollTopAnimationFrame = null;
+let restoreScrollTopStyles = null;
+
+function getPageScrollTop() {
+    const scrollingElement = document.scrollingElement || document.documentElement;
+    return window.scrollY || scrollingElement?.scrollTop || 0;
+}
+
+function updateScrollTopButtonPosition() {
+    if (!scrollTopButton) return;
+
+    if (window.innerWidth <= 720) {
+        scrollTopButton.style.removeProperty('--xt-scroll-top-left');
+        scrollTopButton.style.removeProperty('--xt-scroll-top-right');
+        return;
+    }
+
+    const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
+    if (!primaryColumn) {
+        scrollTopButton.style.removeProperty('--xt-scroll-top-left');
+        scrollTopButton.style.removeProperty('--xt-scroll-top-right');
+        return;
+    }
+
+    const rect = primaryColumn.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const buttonWidth = 42;
+    const gap = 12;
+    const left = Math.min(window.innerWidth - buttonWidth - gap, Math.max(gap, rect.right + gap));
+    scrollTopButton.style.setProperty('--xt-scroll-top-left', `${left}px`);
+    scrollTopButton.style.setProperty('--xt-scroll-top-right', 'auto');
+}
+
+function updateScrollTopButtonVisibility() {
+    if (!scrollTopButton) return;
+
+    const shouldShow = getPageScrollTop() > 420;
+    scrollTopButton.classList.toggle('show', shouldShow);
+    scrollTopButton.classList.toggle('xt-dark', isDarkTheme());
+}
+
+function scheduleScrollTopButtonUpdate() {
+    if (scrollTopUpdateFrame) return;
+
+    scrollTopUpdateFrame = requestAnimationFrame(() => {
+        scrollTopUpdateFrame = null;
+        updateScrollTopButtonPosition();
+        updateScrollTopButtonVisibility();
+    });
+}
+
+function setPageScrollTop(top) {
+    const scrollingElement = document.scrollingElement || document.documentElement;
+    const nextTop = Math.max(0, top);
+    window.scrollTo(0, nextTop);
+    if (scrollingElement) scrollingElement.scrollTop = nextTop;
+    document.documentElement.scrollTop = nextTop;
+    if (document.body) document.body.scrollTop = nextTop;
+}
+
+function easeInOutCubic(progress) {
+    return progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+}
+
+function getScrollTopDuration(distance) {
+    return Math.min(1800, Math.max(650, 450 + Math.sqrt(distance) * 18));
+}
+
+function disableNativeScrollBehavior() {
+    const scrollTargets = Array.from(new Set([
+        document.scrollingElement,
+        document.documentElement,
+        document.body
+    ].filter(Boolean)));
+    const previousScrollBehaviors = scrollTargets.map(element => [element, element.style.scrollBehavior]);
+
+    scrollTargets.forEach(element => {
+        element.style.scrollBehavior = 'auto';
+    });
+
+    return () => {
+        previousScrollBehaviors.forEach(([element, value]) => {
+            element.style.scrollBehavior = value;
+        });
+    };
+}
+
+function stopScrollTopAnimation() {
+    if (scrollTopAnimationFrame) {
+        cancelAnimationFrame(scrollTopAnimationFrame);
+        scrollTopAnimationFrame = null;
+    }
+    if (restoreScrollTopStyles) {
+        restoreScrollTopStyles();
+        restoreScrollTopStyles = null;
+    }
+}
+
+function scrollTimelineToTop() {
+    stopScrollTopAnimation();
+
+    const startTop = getPageScrollTop();
+    if (startTop <= 2) {
+        setPageScrollTop(0);
+        scheduleScrollTopButtonUpdate();
+        return;
+    }
+
+    restoreScrollTopStyles = disableNativeScrollBehavior();
+    const duration = getScrollTopDuration(startTop);
+    const startedAt = performance.now();
+
+    const finish = () => {
+        setPageScrollTop(0);
+        stopScrollTopAnimation();
+        scheduleScrollTopButtonUpdate();
+    };
+
+    const animate = (now) => {
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const nextTop = startTop * (1 - easeInOutCubic(progress));
+        setPageScrollTop(nextTop);
+
+        if (progress >= 1) {
+            finish();
+            return;
+        }
+
+        scrollTopAnimationFrame = requestAnimationFrame(animate);
+    };
+
+    scrollTopAnimationFrame = requestAnimationFrame(animate);
+}
+
+function initScrollTopButton() {
+    if (scrollTopButton) return;
+
+    scrollTopButton = document.createElement('button');
+    scrollTopButton.type = 'button';
+    scrollTopButton.className = 'xt-scroll-top-button';
+    scrollTopButton.title = '回到顶部';
+    scrollTopButton.setAttribute('aria-label', '回到顶部');
+    scrollTopButton.innerHTML = SCROLL_TOP_ICON_SVG;
+
+    scrollTopButton.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        scrollTimelineToTop();
+    });
+
+    document.body.appendChild(scrollTopButton);
+    window.addEventListener('scroll', scheduleScrollTopButtonUpdate, { passive: true });
+    window.addEventListener('resize', scheduleScrollTopButtonUpdate, { passive: true });
+
+    scheduleScrollTopButtonUpdate();
+    setTimeout(scheduleScrollTopButtonUpdate, 1000);
+    setTimeout(scheduleScrollTopButtonUpdate, 3000);
 }
 
 function getApiConfig(originalElement) {
@@ -1595,6 +1819,7 @@ function observeTweets() {
                             node.matches('div.translation-container') ||
                             node.matches('div.xt-modal-overlay') ||
                             node.matches('div.xt-toast') ||
+                            node.matches('.xt-scroll-top-button') ||
                             node.matches('.xt-translate-icon') ||
                             node.matches('.xt-remove-icon')
                         );
@@ -1676,6 +1901,7 @@ function processTweet(tweetElement, attempt = 0, mode = getSettings().translatio
 (function() {
     'use strict';
     console.log('[X-Translate] IIFE execution initiated, URL:', window.location.href);
+    initScrollTopButton();
     setTimeout(() => {
         observeTweets();
     }, 1000);
