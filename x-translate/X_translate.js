@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Translate X Post with AI (Markdown Support & Multi-Engine)
 // @namespace    http://tampermonkey.net/
-// @version      3.20
+// @version      3.21
 // @description  Dynamically translate X posts using custom AI engines (Volcengine, DeepSeek, OpenAI, etc.) with Markdown support and beautiful settings modal.
 // @author       You
 // @match        https://x.com/*
@@ -25,7 +25,6 @@
 const CONFIG = {};
 
 const TRANSLATE_ICON_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>';
-const SCROLL_TOP_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 5.5l-7 7 1.4 1.4L11 9.3V20h2V9.3l4.6 4.6L19 12.5z"/></svg>';
 const CLOSE_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 const CHECK_ICON_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
 const EYE_ICON_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -283,8 +282,6 @@ GM_addStyle(`
         border: 1px solid #cfd9de;
         border-radius: 16px;
         width: min(100%, 560px);
-        height: min(780px, calc(100vh - 48px));
-        height: min(780px, calc(100dvh - 48px));
         max-height: min(780px, calc(100vh - 48px));
         max-height: min(780px, calc(100dvh - 48px));
         box-shadow: 0 8px 28px rgba(15, 20, 25, 0.18);
@@ -330,16 +327,6 @@ GM_addStyle(`
     }
     .xt-modal-title-group {
         min-width: 0;
-    }
-    .xt-modal-kicker {
-        color: #536471;
-        font-size: 12px;
-        font-weight: 700;
-        line-height: 1.2;
-        margin-bottom: 3px;
-    }
-    .xt-modal-overlay.xt-dark .xt-modal-kicker {
-        color: #71767b;
     }
     .xt-modal-title {
         display: flex;
@@ -398,8 +385,7 @@ GM_addStyle(`
     .xt-eye-btn:focus-visible,
     .xt-segmented-option:focus-visible,
     .xt-btn:focus-visible,
-    .xt-btn-reset:focus-visible,
-    .xt-scroll-top-button:focus-visible {
+    .xt-btn-reset:focus-visible {
         outline: 2px solid #1d9bf0;
         outline-offset: 2px;
     }
@@ -407,7 +393,7 @@ GM_addStyle(`
     .xt-modal-body {
         padding: 18px 22px 20px;
         overflow-y: auto;
-        flex: 1 1 0;
+        flex: 0 1 auto;
         min-height: 0;
         box-sizing: border-box;
         display: flex;
@@ -445,6 +431,14 @@ GM_addStyle(`
         line-height: 1.35;
     }
     .xt-modal-overlay.xt-dark .xt-form-label {
+        color: #71767b;
+    }
+    .xt-form-hint {
+        color: #536471;
+        font-size: 12px;
+        line-height: 1.35;
+    }
+    .xt-modal-overlay.xt-dark .xt-form-hint {
         color: #71767b;
     }
 
@@ -700,8 +694,6 @@ GM_addStyle(`
         .xt-modal,
         .xt-modal-overlay.xt-dark .xt-modal {
             border-radius: 18px;
-            height: calc(100vh - 24px);
-            height: calc(100dvh - 24px);
             max-height: calc(100vh - 24px);
             max-height: calc(100dvh - 24px);
         }
@@ -817,65 +809,6 @@ GM_addStyle(`
         animation: xt-spin 1s linear infinite;
     }
 
-    .xt-scroll-top-button {
-        position: fixed;
-        bottom: 88px;
-        left: var(--xt-scroll-top-left, auto);
-        right: var(--xt-scroll-top-right, 18px);
-        width: 42px;
-        height: 42px;
-        border: 1px solid #cfd9de;
-        border-radius: 50%;
-        background: #ffffff;
-        color: #0f1419;
-        z-index: 99999;
-        cursor: pointer;
-        box-shadow: 0 4px 16px rgba(15, 20, 25, 0.16);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(8px);
-        transition: opacity 0.18s ease, transform 0.18s ease, background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
-    }
-    .xt-scroll-top-button.show {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-    }
-    .xt-scroll-top-button:hover {
-        background: #1d9bf0;
-        border-color: #1d9bf0;
-        color: #ffffff;
-        transform: translateY(-1px);
-    }
-    .xt-scroll-top-button:active {
-        transform: translateY(0);
-    }
-    .xt-scroll-top-button.xt-dark {
-        background: #16181c;
-        color: #e7e9ea;
-        border-color: #2f3336;
-        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
-    }
-    .xt-scroll-top-button.xt-dark:hover {
-        background: #1d9bf0;
-        color: #ffffff;
-        border-color: #1d9bf0;
-    }
-    .xt-scroll-top-button svg {
-        width: 20px;
-        height: 20px;
-    }
-    @media (max-width: 720px) {
-        .xt-scroll-top-button {
-            left: auto !important;
-            right: 16px;
-            bottom: 78px;
-        }
-    }
     @keyframes xt-spin {
         from { transform: rotate(0deg); }
         to { transform: rotate(360deg); }
@@ -1088,7 +1021,6 @@ function createSettingsModal() {
         <div class="xt-modal">
             <div class="xt-modal-header">
                 <div class="xt-modal-title-group">
-                    <div class="xt-modal-kicker">X Translate</div>
                     <h3 class="xt-modal-title">${TRANSLATE_ICON_SVG}<span>翻译设置</span></h3>
                 </div>
                 <button class="xt-modal-close" id="xt-close-btn" type="button" aria-label="关闭设置">${CLOSE_ICON_SVG}</button>
@@ -1106,6 +1038,7 @@ function createSettingsModal() {
                     <div class="xt-form-group">
                         <label class="xt-form-label">接口地址</label>
                         <input type="text" id="xt-base-url" class="xt-input" placeholder="https://api.openai.com/v1" value="${safeSettings.baseUrl}" autocomplete="off">
+                        <span class="xt-form-hint">仅支持 OpenAI 兼容的 Chat Completions 格式；填写 v1 地址即可。</span>
                     </div>
 
                     <div class="xt-form-group">
@@ -1305,170 +1238,6 @@ if (typeof GM_registerMenuCommand === 'function') {
     GM_registerMenuCommand('配置 X 翻译 API', showSettingsModal);
 }
 
-let scrollTopButton = null;
-let scrollTopUpdateFrame = null;
-let scrollTopAnimationFrame = null;
-let restoreScrollTopStyles = null;
-
-function getPageScrollTop() {
-    const scrollingElement = document.scrollingElement || document.documentElement;
-    return window.scrollY || scrollingElement?.scrollTop || 0;
-}
-
-function updateScrollTopButtonPosition() {
-    if (!scrollTopButton) return;
-
-    if (window.innerWidth <= 720) {
-        scrollTopButton.style.removeProperty('--xt-scroll-top-left');
-        scrollTopButton.style.removeProperty('--xt-scroll-top-right');
-        return;
-    }
-
-    const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
-    if (!primaryColumn) {
-        scrollTopButton.style.removeProperty('--xt-scroll-top-left');
-        scrollTopButton.style.removeProperty('--xt-scroll-top-right');
-        return;
-    }
-
-    const rect = primaryColumn.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-
-    const buttonWidth = 42;
-    const gap = 12;
-    const left = Math.min(window.innerWidth - buttonWidth - gap, Math.max(gap, rect.right + gap));
-    scrollTopButton.style.setProperty('--xt-scroll-top-left', `${left}px`);
-    scrollTopButton.style.setProperty('--xt-scroll-top-right', 'auto');
-}
-
-function updateScrollTopButtonVisibility() {
-    if (!scrollTopButton) return;
-
-    const shouldShow = getPageScrollTop() > 420;
-    scrollTopButton.classList.toggle('show', shouldShow);
-    scrollTopButton.classList.toggle('xt-dark', isDarkTheme());
-}
-
-function scheduleScrollTopButtonUpdate() {
-    if (scrollTopUpdateFrame) return;
-
-    scrollTopUpdateFrame = requestAnimationFrame(() => {
-        scrollTopUpdateFrame = null;
-        updateScrollTopButtonPosition();
-        updateScrollTopButtonVisibility();
-    });
-}
-
-function setPageScrollTop(top) {
-    const scrollingElement = document.scrollingElement || document.documentElement;
-    const nextTop = Math.max(0, top);
-    window.scrollTo(0, nextTop);
-    if (scrollingElement) scrollingElement.scrollTop = nextTop;
-    document.documentElement.scrollTop = nextTop;
-    if (document.body) document.body.scrollTop = nextTop;
-}
-
-function easeInOutCubic(progress) {
-    return progress < 0.5
-        ? 4 * progress * progress * progress
-        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-}
-
-function getScrollTopDuration(distance) {
-    return Math.min(1800, Math.max(650, 450 + Math.sqrt(distance) * 18));
-}
-
-function disableNativeScrollBehavior() {
-    const scrollTargets = Array.from(new Set([
-        document.scrollingElement,
-        document.documentElement,
-        document.body
-    ].filter(Boolean)));
-    const previousScrollBehaviors = scrollTargets.map(element => [element, element.style.scrollBehavior]);
-
-    scrollTargets.forEach(element => {
-        element.style.scrollBehavior = 'auto';
-    });
-
-    return () => {
-        previousScrollBehaviors.forEach(([element, value]) => {
-            element.style.scrollBehavior = value;
-        });
-    };
-}
-
-function stopScrollTopAnimation() {
-    if (scrollTopAnimationFrame) {
-        cancelAnimationFrame(scrollTopAnimationFrame);
-        scrollTopAnimationFrame = null;
-    }
-    if (restoreScrollTopStyles) {
-        restoreScrollTopStyles();
-        restoreScrollTopStyles = null;
-    }
-}
-
-function scrollTimelineToTop() {
-    stopScrollTopAnimation();
-
-    const startTop = getPageScrollTop();
-    if (startTop <= 2) {
-        setPageScrollTop(0);
-        scheduleScrollTopButtonUpdate();
-        return;
-    }
-
-    restoreScrollTopStyles = disableNativeScrollBehavior();
-    const duration = getScrollTopDuration(startTop);
-    const startedAt = performance.now();
-
-    const finish = () => {
-        setPageScrollTop(0);
-        stopScrollTopAnimation();
-        scheduleScrollTopButtonUpdate();
-    };
-
-    const animate = (now) => {
-        const progress = Math.min(1, (now - startedAt) / duration);
-        const nextTop = startTop * (1 - easeInOutCubic(progress));
-        setPageScrollTop(nextTop);
-
-        if (progress >= 1) {
-            finish();
-            return;
-        }
-
-        scrollTopAnimationFrame = requestAnimationFrame(animate);
-    };
-
-    scrollTopAnimationFrame = requestAnimationFrame(animate);
-}
-
-function initScrollTopButton() {
-    if (scrollTopButton) return;
-
-    scrollTopButton = document.createElement('button');
-    scrollTopButton.type = 'button';
-    scrollTopButton.className = 'xt-scroll-top-button';
-    scrollTopButton.title = '回到顶部';
-    scrollTopButton.setAttribute('aria-label', '回到顶部');
-    scrollTopButton.innerHTML = SCROLL_TOP_ICON_SVG;
-
-    scrollTopButton.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        scrollTimelineToTop();
-    });
-
-    document.body.appendChild(scrollTopButton);
-    window.addEventListener('scroll', scheduleScrollTopButtonUpdate, { passive: true });
-    window.addEventListener('resize', scheduleScrollTopButtonUpdate, { passive: true });
-
-    scheduleScrollTopButtonUpdate();
-    setTimeout(scheduleScrollTopButtonUpdate, 1000);
-    setTimeout(scheduleScrollTopButtonUpdate, 3000);
-}
-
 function getApiConfig(originalElement) {
     const settings = getSettings();
     if (settings.apiKey) {
@@ -1660,7 +1429,7 @@ function hasXArticleCard(tweetElement) {
 }
 
 function getChineseCharCount(text) {
-    return (text.match(/[\u3400-\u9fff]/g) || []).length;
+    return (text.match(/\p{Script=Han}/gu) || []).length;
 }
 
 function hasChineseChar(text) {
@@ -1697,23 +1466,65 @@ function isPureLinkText(text) {
     return tokens.length > 0 && tokens.every(isUrlLikeTextToken);
 }
 
-function getNonChineseWordCount(text) {
-    const nonChineseText = text.replace(/[\u3400-\u9fff]/g, ' ');
-    const words = nonChineseText.match(/[a-zA-Z0-9]+(?:['’-][a-zA-Z0-9]+)?|[\u3040-\u30ff]+|[\uac00-\ud7af]+|[\u0400-\u04ff]+/g);
+function normalizeLowInformationToken(token) {
+    return normalizeLinkCandidateText(token)
+        .replace(/^[<([{'"“‘]+/, '')
+        .replace(/[>\])}'"”’.,;:!?，。；：！？]+$/, '');
+}
+
+function isLowInformationToken(token) {
+    const normalizedToken = normalizeLowInformationToken(token);
+    if (!normalizedToken) return true;
+    if (isUrlLikeTextToken(normalizedToken)) return true;
+    if (/^[@#＃$]\S+$/.test(normalizedToken)) return true;
+    if (/^[\d\s.,;:!?%+\-_/\\()[\]{}'"“”‘’|]+$/.test(normalizedToken)) return true;
+    return false;
+}
+
+function getTranslatableWordCount(text) {
+    const meaningfulText = normalizeLinkCandidateText(text)
+        .split(' ')
+        .filter(token => !isLowInformationToken(token))
+        .join(' ');
+    const words = meaningfulText.match(/[a-zA-Z]+(?:['’-][a-zA-Z]+)?|[\u3040-\u30ff]+|[\uac00-\ud7af]+|[\u0400-\u04ff]+/g);
     return words ? words.length : 0;
 }
 
-function getAutoTranslationEligibility(text) {
+function getTweetTextTranslationEligibility(text) {
     if (hasChineseChar(text)) {
         return { eligible: false, reason: 'contains_chinese' };
     }
 
-    const nonChineseWordCount = getNonChineseWordCount(text);
-    if (nonChineseWordCount <= 3) {
-        return { eligible: false, reason: 'not_enough_non_chinese_words', nonChineseWordCount };
+    if (isPureLinkText(text)) {
+        return { eligible: false, reason: 'pure_link' };
     }
 
-    return { eligible: true, nonChineseWordCount };
+    if (!hasNonChineseTranslatableChar(text)) {
+        return { eligible: false, reason: 'no_translatable_content' };
+    }
+
+    const tokens = normalizeLinkCandidateText(text).split(' ').filter(Boolean);
+    if (tokens.length > 0 && tokens.every(isLowInformationToken)) {
+        return { eligible: false, reason: 'low_information_content' };
+    }
+
+    const translatableWordCount = getTranslatableWordCount(text);
+    if (translatableWordCount <= 3) {
+        return { eligible: false, reason: 'not_enough_translatable_words', translatableWordCount };
+    }
+
+    return { eligible: true, translatableWordCount };
+}
+
+function getTranslationSkipMessage(reason) {
+    const messages = {
+        contains_chinese: '包含中文内容，无需翻译',
+        pure_link: '纯链接内容无需翻译',
+        no_translatable_content: '没有可翻译内容',
+        low_information_content: '低信息内容无需翻译',
+        not_enough_translatable_words: '内容过短，无需翻译'
+    };
+    return messages[reason] || '该内容无需翻译';
 }
 
 // 注入翻译小图标到推文 time 元素旁边
@@ -1781,7 +1592,7 @@ function shouldAutoTranslate(mode) {
     return translationMode === TRANSLATION_MODES.AUTO || translationMode === TRANSLATION_MODES.VIEWPORT;
 }
 
-function startTweetTranslation(tweetElement, result = null, btn = getTranslateButton(tweetElement), options = {}) {
+function startTweetTranslation(tweetElement, candidate = null, btn = getTranslateButton(tweetElement), options = {}) {
     if (tweetElement.querySelector('.translation-container')) {
         setTranslateButtonState(btn, 'remove');
         return { status: 'already_translated' };
@@ -1790,29 +1601,18 @@ function startTweetTranslation(tweetElement, result = null, btn = getTranslateBu
         return { status: 'translating' };
     }
 
-    const translationResult = result || getTweetTextElement(tweetElement);
-    if (translationResult.status !== 'success') {
-        if (translationResult.status === 'skip' && options.showSkipToast && translationResult.reason === 'contains_chinese') {
-            showToast('中文内容无需翻译');
+    const translationCandidate = candidate || getTweetTranslationCandidate(tweetElement);
+    if (translationCandidate.status !== 'success') {
+        if (translationCandidate.status === 'skip' && options.showSkipToast) {
+            showToast(getTranslationSkipMessage(translationCandidate.reason));
         }
-        return translationResult;
-    }
-
-    if (!options.force) {
-        const eligibility = getAutoTranslationEligibility(translationResult.text);
-        if (!eligibility.eligible) {
-            return {
-                status: 'skip',
-                reason: eligibility.reason,
-                text: translationResult.text
-            };
-        }
+        return translationCandidate;
     }
 
     tweetElement.setAttribute('data-xt-translating', 'true');
     setTranslateButtonState(btn, 'translate', true);
 
-    translateText(translationResult.formattedText || translationResult.text, translationResult.element, translationResult.text, () => {
+    translateText(translationCandidate.formattedText || translationCandidate.text, translationCandidate.element, translationCandidate.text, () => {
         tweetElement.removeAttribute('data-xt-translating');
         setTranslateButtonState(btn, 'remove');
     });
@@ -1834,14 +1634,14 @@ function handleTranslateClick(tweetElement, btn) {
     const action = btn.dataset.xtAction;
 
     if (action === 'translate') {
-        startTweetTranslation(tweetElement, null, btn, { force: true, showSkipToast: true });
+        startTweetTranslation(tweetElement, null, btn, { showSkipToast: true });
     } else if (action === 'remove') {
         removeTweetTranslation(tweetElement, btn);
     }
 }
 
-// 获取推文文本并过滤（精细化状态机，完美过滤中文与非翻译文本）
-function getTweetTextElement(tweetElement) {
+// 统一判断推文是否值得翻译：按钮注入、自动翻译和手动翻译都只走这一个入口。
+function getTweetTranslationCandidate(tweetElement) {
     if (hasXArticleCard(tweetElement)) {
         return { status: 'skip', reason: 'x_article_card', text: '' };
     }
@@ -1866,13 +1666,9 @@ function getTweetTextElement(tweetElement) {
         return { status: 'retry' };
     }
 
-    if (isPureLinkText(text)) {
-        return { status: 'skip', reason: 'pure_link', text };
-    }
-    
-    // 按钮注入只判断是否存在可翻译的非中文字符；自动翻译资格在 startTweetTranslation 中判断。
-    if (!hasNonChineseTranslatableChar(text)) {
-        return { status: 'skip', reason: 'no_non_chinese_translatable_char', text };
+    const eligibility = getTweetTextTranslationEligibility(text);
+    if (!eligibility.eligible) {
+        return { status: 'skip', reason: eligibility.reason, text };
     }
 
     const formattedText = htmlToMarkdown(textElement);
@@ -2101,7 +1897,6 @@ function observeTweets() {
                             node.matches('div.translation-container') ||
                             node.matches('div.xt-modal-overlay') ||
                             node.matches('div.xt-toast') ||
-                            node.matches('.xt-scroll-top-button') ||
                             node.matches('.xt-translate-icon') ||
                             node.matches('.xt-remove-icon')
                         );
@@ -2150,7 +1945,7 @@ function processTweet(tweetElement, attempt = 0, mode = getSettings().translatio
         }
     }
 
-    const result = getTweetTextElement(tweetElement);
+    const result = getTweetTranslationCandidate(tweetElement);
 
     if (result.status === 'success') {
         tweetElement.setAttribute('data-xt-processed', 'true');
@@ -2183,7 +1978,6 @@ function processTweet(tweetElement, attempt = 0, mode = getSettings().translatio
 (function() {
     'use strict';
     console.log('[X-Translate] IIFE execution initiated, URL:', window.location.href);
-    initScrollTopButton();
     setTimeout(() => {
         observeTweets();
     }, 1000);
