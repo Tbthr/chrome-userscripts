@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Translate X Post with AI (Markdown Support & Multi-Engine)
 // @namespace    http://tampermonkey.net/
-// @version      3.12
+// @version      3.20
 // @description  Dynamically translate X posts using custom AI engines (Volcengine, DeepSeek, OpenAI, etc.) with Markdown support and beautiful settings modal.
 // @author       You
 // @match        https://x.com/*
@@ -26,6 +26,10 @@ const CONFIG = {};
 
 const TRANSLATE_ICON_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>';
 const SCROLL_TOP_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 5.5l-7 7 1.4 1.4L11 9.3V20h2V9.3l4.6 4.6L19 12.5z"/></svg>';
+const CLOSE_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const CHECK_ICON_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const EYE_ICON_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_ICON_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 14.9A10.8 10.8 0 0 0 22 12s-3.5-7-10-7a10.6 10.6 0 0 0-4.9 1.2"/><path d="M2 2l20 20"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M6.5 6.5A13.6 13.6 0 0 0 2 12s3.5 7 10 7a10.9 10.9 0 0 0 5.5-1.5"/></svg>';
 
 console.log('[X-Translate] Script loaded and running on:', window.location.href);
 
@@ -134,28 +138,63 @@ let missingApiKeyShown = false;
 
 // 添加 Markdown 样式与配置弹窗 CSS 样式
 GM_addStyle(`
-    /* 翻译卡片基础样式 */
     .translation-container {
         opacity: 0;
         max-height: 0;
         overflow: hidden;
-        transition: opacity 0.3s ease-in-out, max-height 0.3s ease-in-out;
+        transition: opacity 0.24s ease, max-height 0.28s ease;
         position: relative;
-        background-color: rgba(0, 0, 0, 0.03);
-        border: 1px solid rgba(0, 0, 0, 0.08);
+        background: #f7f9f9;
+        border: 1px solid #eff3f4;
         border-left: 3px solid #1d9bf0;
         border-radius: 12px;
         overflow-wrap: break-word;
         word-break: break-word;
+        box-shadow: none;
     }
     .translation-container.show {
         opacity: 1;
-        max-height: 1000px;
+        max-height: 1200px;
     }
     .translation-container.xt-dark {
-        background-color: rgba(255, 255, 255, 0.08) !important;
-        border: 1px solid rgba(255, 255, 255, 0.22);
-        border-left: 3px solid #1d9bf0;
+        background: #080808 !important;
+        border: 1px solid #2f3336;
+        border-left: 1px solid #2f3336;
+        color: #e7e9ea !important;
+    }
+    .translation-container-header {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0 0 6px;
+        color: #536471;
+        font-size: 12px;
+        line-height: 1.25;
+        font-weight: 700;
+    }
+    .translation-container-header svg {
+        width: 14px;
+        height: 14px;
+        color: #1d9bf0;
+        flex: 0 0 auto;
+    }
+    .translation-container.xt-dark .translation-container-header {
+        color: #71767b;
+    }
+    .translation-container-content {
+        color: inherit;
+    }
+    .translation-container-content > :first-child {
+        margin-top: 0;
+    }
+    .translation-container-content > :last-child {
+        margin-bottom: 0;
+    }
+    .translation-placeholder {
+        color: #536471;
+    }
+    .translation-container.xt-dark .translation-placeholder {
+        color: #71767b;
     }
     .translation-container h1, .translation-container h2, .translation-container h3,
     .translation-container h4, .translation-container h5, .translation-container h6 {
@@ -172,30 +211,55 @@ GM_addStyle(`
     .translation-container p { margin: 8px 0; }
     .translation-container ul, .translation-container ol { padding-left: 20px; margin: 8px 0; }
     .translation-container li { margin: 3px 0; }
-    .translation-container code { background-color: rgba(128, 128, 128, 0.15); padding: 2px 5px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
-    .translation-container pre { background-color: rgba(128, 128, 128, 0.15); padding: 10px; border-radius: 8px; overflow: auto; margin: 10px 0; }
-    .translation-container pre code { background-color: transparent; padding: 0; }
-    .translation-container blockquote { border-left: 3px solid rgba(128, 128, 128, 0.4); margin: 8px 0; padding-left: 10px; opacity: 0.8; }
+    .translation-container code {
+        background: rgba(83, 100, 113, 0.12);
+        padding: 2px 5px;
+        border-radius: 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.9em;
+    }
+    .translation-container.xt-dark code {
+        background: rgba(239, 243, 244, 0.12);
+    }
+    .translation-container pre {
+        background: rgba(83, 100, 113, 0.12);
+        padding: 10px;
+        border-radius: 8px;
+        overflow: auto;
+        margin: 10px 0;
+    }
+    .translation-container.xt-dark pre {
+        background: rgba(239, 243, 244, 0.1);
+    }
+    .translation-container pre code { background: transparent; padding: 0; }
+    .translation-container blockquote {
+        border-left: 3px solid rgba(83, 100, 113, 0.35);
+        margin: 8px 0;
+        padding-left: 10px;
+        color: #536471;
+    }
+    .translation-container.xt-dark blockquote {
+        border-left-color: rgba(113, 118, 123, 0.55);
+        color: #71767b;
+    }
     .translation-container a { color: #1d9bf0; text-decoration: none; }
     .translation-container a:hover { text-decoration: underline; }
     .translation-container strong { font-weight: 700; }
     .translation-container em { font-style: italic; }
     .translation-container table { border-collapse: collapse; width: 100%; margin: 10px 0; }
-    .translation-container th, .translation-container td { border: 1px solid rgba(128, 128, 128, 0.3); padding: 8px; }
-    .translation-container th { background-color: rgba(128, 128, 128, 0.15); }
-    .translation-container img { max-width: 100%; height: auto; border-radius: 6px; }
+    .translation-container th, .translation-container td { border: 1px solid #cfd9de; padding: 8px; }
+    .translation-container.xt-dark th, .translation-container.xt-dark td { border-color: #2f3336; }
+    .translation-container th { background: rgba(83, 100, 113, 0.1); }
+    .translation-container.xt-dark th { background: rgba(239, 243, 244, 0.08); }
+    .translation-container img { max-width: 100%; height: auto; border-radius: 8px; }
 
-    /* 设置面板遮罩层 */
     .xt-modal-overlay {
         position: fixed;
-        top: 0;
-        left: 0;
+        inset: 0;
         width: 100%;
         height: 100%;
         padding: 24px;
-        background: rgba(0, 0, 0, 0.58);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
+        background: rgba(83, 100, 113, 0.42);
         z-index: 100000;
         display: flex;
         align-items: center;
@@ -203,286 +267,403 @@ GM_addStyle(`
         box-sizing: border-box;
         opacity: 0;
         pointer-events: none;
-        transition: opacity 0.3s ease;
+        overscroll-behavior: contain;
+        transition: opacity 0.18s ease;
+    }
+    .xt-modal-overlay.xt-dark {
+        background: rgba(0, 0, 0, 0.72);
     }
     .xt-modal-overlay.show {
         opacity: 1;
         pointer-events: auto;
     }
-    
-    /* 弹窗主体 */
+
     .xt-modal {
-        background: rgba(255, 255, 255, 0.85);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.4);
-        border-radius: 22px;
+        background: #ffffff;
+        border: 1px solid #cfd9de;
+        border-radius: 16px;
         width: min(100%, 560px);
-        max-height: min(760px, calc(100vh - 48px));
-        box-shadow: 0 24px 70px rgba(0,0,0,0.22);
+        height: min(780px, calc(100vh - 48px));
+        height: min(780px, calc(100dvh - 48px));
+        max-height: min(780px, calc(100vh - 48px));
+        max-height: min(780px, calc(100dvh - 48px));
+        box-shadow: 0 8px 28px rgba(15, 20, 25, 0.18);
         display: flex;
         flex-direction: column;
-        transform: scale(0.95);
-        transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        min-height: 0;
+        transform: translateY(8px) scale(0.985);
+        transition: transform 0.2s ease;
         overflow: hidden;
+        overscroll-behavior: contain;
         color: #0f1419;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
     .xt-modal-overlay.show .xt-modal {
-        transform: scale(1);
+        transform: translateY(0) scale(1);
     }
-    .xt-modal button {
+    .xt-modal-overlay.xt-dark .xt-modal {
+        background: #000000;
+        border-color: #2f3336;
+        border-radius: 20px;
+        color: #e7e9ea;
+        box-shadow: 0 18px 70px rgba(0, 0, 0, 0.72);
+    }
+    .xt-modal button,
+    .xt-modal input,
+    .xt-modal textarea {
         font-family: inherit;
     }
 
-    /* 暗黑模式自适应 */
-    .xt-modal-overlay.xt-dark .xt-modal {
-        background: rgba(21, 32, 43, 0.94);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        color: #e7e9ea;
-        box-shadow: 0 24px 70px rgba(0,0,0,0.52);
-    }
-
     .xt-modal-header {
-        padding: 22px 28px;
-        border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+        min-height: 66px;
+        padding: 0 18px 0 22px;
+        border-bottom: 1px solid #eff3f4;
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 16px;
         flex: 0 0 auto;
     }
-    .xt-modal-title {
-        font-size: 21px;
+    .xt-modal-overlay.xt-dark .xt-modal-header {
+        min-height: 72px;
+        border-bottom-color: #2f3336;
+    }
+    .xt-modal-title-group {
+        min-width: 0;
+    }
+    .xt-modal-kicker {
+        color: #536471;
+        font-size: 12px;
         font-weight: 700;
+        line-height: 1.2;
+        margin-bottom: 3px;
+    }
+    .xt-modal-overlay.xt-dark .xt-modal-kicker {
+        color: #71767b;
+    }
+    .xt-modal-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 20px;
+        font-weight: 800;
         margin: 0;
         letter-spacing: 0;
-        line-height: 1.25;
+        line-height: 1.2;
     }
-    .xt-modal-close {
+    .xt-modal-title svg {
+        width: 22px;
+        height: 22px;
+        color: #1d9bf0;
+        flex: 0 0 auto;
+    }
+    .xt-modal-close,
+    .xt-eye-btn {
         width: 36px;
         height: 36px;
-        background: rgba(128, 128, 128, 0.1);
-        border: 1px solid rgba(128, 128, 128, 0.12);
+        border: 0;
         border-radius: 50%;
-        font-size: 26px;
         cursor: pointer;
         color: inherit;
-        opacity: 0.6;
-        transition: opacity 0.2s, background 0.2s, transform 0.2s;
+        background: transparent;
+        transition: background 0.16s ease, color 0.16s ease;
         padding: 0;
-        line-height: 1;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         flex: 0 0 auto;
     }
-    .xt-modal-close:hover {
-        opacity: 1;
-        background: rgba(128, 128, 128, 0.18);
-        transform: scale(1.04);
+    .xt-modal-close:hover,
+    .xt-eye-btn:hover {
+        background: rgba(15, 20, 25, 0.1);
+    }
+    .xt-modal-overlay.xt-dark .xt-modal-close,
+    .xt-modal-overlay.xt-dark .xt-eye-btn {
+        background: rgba(239, 243, 244, 0.08);
+    }
+    .xt-modal-overlay.xt-dark .xt-modal-close:hover,
+    .xt-modal-overlay.xt-dark .xt-eye-btn:hover {
+        background: rgba(239, 243, 244, 0.14);
+    }
+    .xt-modal-close svg,
+    .xt-eye-btn svg {
+        width: 20px;
+        height: 20px;
+    }
+    .xt-eye-btn svg {
+        width: 18px;
+        height: 18px;
     }
     .xt-modal-close:focus-visible,
     .xt-eye-btn:focus-visible,
     .xt-segmented-option:focus-visible,
-    .xt-prompt-toggle:focus-visible,
     .xt-btn:focus-visible,
+    .xt-btn-reset:focus-visible,
     .xt-scroll-top-button:focus-visible {
         outline: 2px solid #1d9bf0;
         outline-offset: 2px;
     }
-    
+
     .xt-modal-body {
-        padding: 22px 28px 24px;
+        padding: 18px 22px 20px;
         overflow-y: auto;
-        flex: 1 1 auto;
+        flex: 1 1 0;
         min-height: 0;
+        box-sizing: border-box;
         display: flex;
         flex-direction: column;
-        gap: 18px;
+        gap: 16px;
+        overscroll-behavior: contain;
         scrollbar-width: thin;
+        -webkit-overflow-scrolling: touch;
+    }
+    .xt-modal-body > * {
+        flex-shrink: 0;
+    }
+    .xt-modal-overlay.xt-dark .xt-modal-body {
+        padding-top: 20px;
+    }
+    .xt-field-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
     }
     .xt-form-group {
         display: flex;
         flex-direction: column;
         gap: 8px;
+        min-width: 0;
     }
     .xt-form-label {
-        font-size: 13.5px;
-        font-weight: 700;
-        opacity: 0.9;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 800;
+        color: #536471;
         line-height: 1.35;
     }
-    
+    .xt-modal-overlay.xt-dark .xt-form-label {
+        color: #71767b;
+    }
+
     .xt-input, .xt-select, .xt-textarea {
         width: 100%;
-        padding: 12px 14px;
-        border-radius: 12px;
-        border: 1px solid rgba(128, 128, 128, 0.3);
-        background: rgba(255, 255, 255, 0.5);
+        padding: 11px 13px;
+        border-radius: 8px;
+        border: 1px solid #cfd9de;
+        background: #ffffff;
         color: inherit;
         font-family: inherit;
         font-size: 15px;
         line-height: 1.45;
-        transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+        transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
         box-sizing: border-box;
     }
     .xt-input {
-        min-height: 48px;
+        min-height: 46px;
     }
     .xt-textarea {
-        min-height: 96px;
+        min-height: 84px;
+        resize: vertical;
     }
     .xt-modal-overlay.xt-dark .xt-input,
     .xt-modal-overlay.xt-dark .xt-select,
     .xt-modal-overlay.xt-dark .xt-textarea {
-        border: 1px solid rgba(128, 128, 128, 0.2);
-        background: rgba(0, 0, 0, 0.3);
+        border-color: #333639;
+        background: #000000;
     }
     .xt-input:focus, .xt-select:focus, .xt-textarea:focus {
         outline: none;
         border-color: #1d9bf0;
-        background: rgba(255, 255, 255, 0.85);
-        box-shadow: 0 0 0 2px rgba(29, 155, 240, 0.25);
+        box-shadow: 0 0 0 1px #1d9bf0;
     }
-    .xt-modal-overlay.xt-dark .xt-input:focus,
-    .xt-modal-overlay.xt-dark .xt-select:focus,
-    .xt-modal-overlay.xt-dark .xt-textarea:focus {
-        background: rgba(0, 0, 0, 0.5);
-    }
-    
     .xt-input[readonly] {
-        opacity: 0.6;
-        background: rgba(128, 128, 128, 0.08) !important;
+        opacity: 0.7;
+        background: #f7f9f9 !important;
         cursor: not-allowed;
     }
 
     .xt-segmented {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 6px;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid #eff3f4;
+        border-radius: 999px;
+        background: #f7f9f9;
+    }
+    .xt-modal-overlay.xt-dark .xt-segmented {
         padding: 5px;
-        border: 1px solid rgba(128, 128, 128, 0.16);
         border-radius: 14px;
-        background: rgba(128, 128, 128, 0.08);
+        border-color: #2f3336;
+        background: #16181c;
     }
     .xt-segmented-option {
         min-width: 0;
-        min-height: 40px;
+        min-height: 36px;
         padding: 8px 10px;
         border: none;
-        border-radius: 10px;
+        border-radius: 999px;
+        appearance: none;
         background: transparent;
-        color: inherit;
+        color: #536471;
         cursor: pointer;
-        font-size: 13.5px;
-        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        font-weight: 800;
         line-height: 1.25;
-        transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+        text-align: center;
+        white-space: nowrap;
+        transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+    }
+    .xt-modal-overlay.xt-dark .xt-segmented-option {
+        border-radius: 10px;
+        color: #71767b;
     }
     .xt-segmented-option:hover {
-        background: rgba(128, 128, 128, 0.12);
+        background: rgba(15, 20, 25, 0.06);
+    }
+    .xt-modal-overlay.xt-dark .xt-segmented-option:hover {
+        background: rgba(239, 243, 244, 0.08);
     }
     .xt-segmented-option.active {
+        background: #0f1419;
+        color: #ffffff;
+    }
+    .xt-modal-overlay.xt-dark .xt-segmented-option.active {
         background: #1d9bf0;
         color: #ffffff;
-        box-shadow: 0 4px 12px rgba(29, 155, 240, 0.24);
-    }
-    .xt-modal-overlay.xt-dark .xt-segmented {
-        background: rgba(0, 0, 0, 0.18);
-        border-color: rgba(255, 255, 255, 0.1);
+        box-shadow: 0 8px 18px rgba(29, 155, 240, 0.24);
     }
 
-
-    .xt-prompt-toggle {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        cursor: pointer;
-        width: 100%;
-        font-size: 14px;
-        font-weight: 700;
-        padding: 14px 0 0;
-        border: 0;
-        border-top: 1px solid rgba(128, 128, 128, 0.15);
-        margin-top: 8px;
-        user-select: none;
-        color: inherit;
-        background: transparent;
-        text-align: left;
+    .xt-advanced-panel {
+        border-radius: 12px;
+        border: 1px solid #eff3f4;
+        background: #f7f9f9;
+        overflow: hidden;
     }
-    .xt-prompt-toggle span:first-child {
+    .xt-modal-overlay.xt-dark .xt-advanced-panel {
+        border-color: #2f3336;
+        border-radius: 16px;
+        background: #080808;
+    }
+    .xt-advanced-title {
+        padding: 16px 14px 0;
         min-width: 0;
-        overflow-wrap: anywhere;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 16px;
+        font-weight: 800;
     }
-    .xt-prompt-arrow {
-        color: #1d9bf0;
-        flex: 0 0 auto;
-        font-size: 13px;
+    .xt-advanced-title small {
+        color: #536471;
+        font-size: 12px;
+        line-height: 1.25;
+        font-weight: 600;
+    }
+    .xt-modal-overlay.xt-dark .xt-advanced-title small {
+        color: #71767b;
     }
     .xt-prompt-container {
-        display: none;
-        flex-direction: column;
-        gap: 16px;
-        margin-top: 14px;
-        animation: xt-slide-down 0.2s ease-out;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        padding: 14px;
     }
-    .xt-prompt-container.show {
-        display: flex;
-    }
-    
-    @keyframes xt-slide-down {
-        from { opacity: 0; transform: translateY(-5px); }
-        to { opacity: 1; transform: translateY(0); }
+    .xt-prompt-container .xt-form-group {
+        grid-column: 1 / -1;
     }
 
     .xt-modal-footer {
-        padding: 18px 28px 22px;
-        border-top: 1px solid rgba(128, 128, 128, 0.15);
+        padding: 14px 22px 18px;
+        border-top: 1px solid #eff3f4;
         display: flex;
-        justify-content: flex-end;
+        justify-content: space-between;
+        align-items: center;
         gap: 14px;
         flex: 0 0 auto;
-        background: rgba(255, 255, 255, 0.68);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
+        background: #ffffff;
     }
     .xt-modal-overlay.xt-dark .xt-modal-footer {
-        background: rgba(21, 32, 43, 0.78);
+        border-top-color: #2f3336;
+        background: #000000;
+    }
+    .xt-footer-note {
+        color: #536471;
+        font-size: 13px;
+        line-height: 1.35;
+    }
+    .xt-modal-overlay.xt-dark .xt-footer-note {
+        color: #71767b;
+    }
+    .xt-footer-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex: 0 0 auto;
     }
     .xt-btn {
-        min-width: 108px;
-        min-height: 46px;
-        padding: 11px 22px;
+        min-height: 42px;
+        padding: 0 19px;
         border-radius: 9999px;
-        font-weight: 700;
+        font-weight: 800;
         font-size: 15px;
         cursor: pointer;
-        transition: all 0.2s ease;
-        border: none;
+        transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+        border: 1px solid #cfd9de;
         box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        white-space: nowrap;
+    }
+    .xt-btn svg {
+        width: 17px;
+        height: 17px;
     }
     .xt-btn-cancel {
-        background: transparent;
-        color: inherit;
-        border: 1px solid rgba(128, 128, 128, 0.35);
+        background: #ffffff;
+        color: #0f1419;
     }
     .xt-btn-cancel:hover {
-        background: rgba(128, 128, 128, 0.1);
+        background: rgba(15, 20, 25, 0.06);
     }
     .xt-btn-save {
-        background: #1d9bf0;
-        color: white;
+        background: #0f1419;
+        color: #ffffff;
+        border-color: #0f1419;
     }
     .xt-btn-save:hover {
-        background: #1a8cd8;
-        box-shadow: 0 4px 12px rgba(29, 155, 240, 0.35);
+        background: #272c30;
+        border-color: #272c30;
+    }
+    .xt-modal-overlay.xt-dark .xt-btn-cancel {
+        background: #000000;
+        color: #e7e9ea;
+        border-color: #536471;
+    }
+    .xt-modal-overlay.xt-dark .xt-btn-cancel:hover {
+        background: rgba(239, 243, 244, 0.08);
+    }
+    .xt-modal-overlay.xt-dark .xt-btn-save {
+        background: #eff3f4;
+        color: #0f1419;
+        border-color: #eff3f4;
+    }
+    .xt-modal-overlay.xt-dark .xt-btn-save:hover {
+        background: #d7dbdc;
+        border-color: #d7dbdc;
     }
 
     .xt-btn-reset {
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 700;
         color: #1d9bf0;
         background: transparent;
         border: none;
@@ -503,43 +684,45 @@ GM_addStyle(`
     }
     .xt-eye-btn {
         position: absolute;
-        right: 8px;
-        width: 36px;
-        height: 36px;
-        background: transparent;
-        border: none;
-        border-radius: 50%;
-        cursor: pointer;
-        color: inherit;
-        opacity: 0.5;
-        transition: opacity 0.2s ease, background 0.2s ease;
-        padding: 0;
-        font-size: 16px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
+        right: 6px;
+        color: #536471;
     }
-    .xt-eye-btn:hover {
-        opacity: 1;
-        background: rgba(128, 128, 128, 0.12);
+    .xt-modal-overlay.xt-dark .xt-eye-btn {
+        color: #71767b;
+        background: transparent;
     }
 
-    @media (max-width: 520px) {
+    @media (max-width: 640px) {
         .xt-modal-overlay {
             align-items: flex-end;
             padding: 12px;
         }
-        .xt-modal {
+        .xt-modal,
+        .xt-modal-overlay.xt-dark .xt-modal {
             border-radius: 18px;
+            height: calc(100vh - 24px);
+            height: calc(100dvh - 24px);
             max-height: calc(100vh - 24px);
+            max-height: calc(100dvh - 24px);
         }
         .xt-modal-header,
-        .xt-modal-body {
+        .xt-modal-body,
+        .xt-modal-footer {
             padding-left: 18px;
             padding-right: 18px;
         }
-        .xt-modal-footer {
-            padding: 14px 18px 18px;
+        .xt-field-row,
+        .xt-prompt-container {
+            grid-template-columns: 1fr;
+        }
+        .xt-prompt-container .xt-form-group {
+            grid-column: auto;
+        }
+        .xt-footer-note {
+            display: none;
+        }
+        .xt-footer-actions {
+            width: 100%;
         }
         .xt-btn {
             flex: 1 1 0;
@@ -547,39 +730,53 @@ GM_addStyle(`
         }
     }
 
-    /* Toast 通知 */
     .xt-toast {
         position: fixed;
         bottom: 24px;
         left: 50%;
         transform: translateX(-50%) translateY(100px);
-        background: rgba(29, 155, 240, 0.95);
-        color: white;
-        padding: 12px 28px;
+        min-height: 44px;
+        padding: 0 20px;
         border-radius: 9999px;
-        font-weight: 700;
+        background: #0f1419;
+        color: #ffffff;
+        font-weight: 800;
         font-size: 14px;
         z-index: 100001;
-        box-shadow: 0 10px 24px rgba(0,0,0,0.18);
-        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        box-shadow: 0 10px 24px rgba(15, 20, 25, 0.2);
+        transition: transform 0.24s cubic-bezier(0.175, 0.885, 0.32, 1.1);
         pointer-events: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
     }
     .xt-toast.show {
         transform: translateX(-50%) translateY(0);
     }
+    .xt-toast svg {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+    }
+    .xt-toast.xt-dark {
+        background: #eff3f4;
+        color: #0f1419;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.48);
+    }
 
-    /* 翻译小图标 - 放在 time 元素旁边 */
     .xt-translate-icon, .xt-remove-icon {
+        width: 28px;
+        height: 28px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        background: none;
+        background: transparent;
         border: none;
         border-radius: 50%;
         cursor: pointer;
-        transition: background 0.2s ease, color 0.2s ease;
-        padding: 2px;
-        margin-left: 2px;
+        transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+        padding: 0;
+        margin-left: 4px;
         vertical-align: middle;
         line-height: 1;
         outline: none;
@@ -589,23 +786,31 @@ GM_addStyle(`
     }
     .xt-remove-icon {
         color: #1d9bf0;
+        background: rgba(29, 155, 240, 0.1);
     }
     .xt-translate-icon:hover, .xt-remove-icon:hover {
         background: rgba(29, 155, 240, 0.1);
         color: #1d9bf0;
     }
     .xt-translate-icon.xt-dark {
-        color: #8b98a5;
+        color: #71767b;
     }
     .xt-remove-icon.xt-dark {
-        color: #4dabf7;
+        color: #1d9bf0;
+        background: rgba(29, 155, 240, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(29, 155, 240, 0.28);
     }
     .xt-translate-icon.xt-dark:hover, .xt-remove-icon.xt-dark:hover {
-        background: rgba(29, 155, 240, 0.15);
-        color: #4dabf7;
+        background: rgba(29, 155, 240, 0.16);
+        color: #1d9bf0;
+    }
+    .xt-translate-icon svg,
+    .xt-remove-icon svg {
+        width: 15px;
+        height: 15px;
     }
     .xt-translate-icon.loading {
-        opacity: 0.4;
+        opacity: 0.55;
         pointer-events: none;
     }
     .xt-translate-icon.loading svg {
@@ -619,13 +824,13 @@ GM_addStyle(`
         right: var(--xt-scroll-top-right, 18px);
         width: 42px;
         height: 42px;
-        border: 1px solid rgba(15, 20, 25, 0.1);
+        border: 1px solid #cfd9de;
         border-radius: 50%;
-        background: rgba(15, 20, 25, 0.88);
-        color: #ffffff;
+        background: #ffffff;
+        color: #0f1419;
         z-index: 99999;
         cursor: pointer;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+        box-shadow: 0 4px 16px rgba(15, 20, 25, 0.16);
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -633,7 +838,7 @@ GM_addStyle(`
         opacity: 0;
         pointer-events: none;
         transform: translateY(8px);
-        transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+        transition: opacity 0.18s ease, transform 0.18s ease, background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
     }
     .xt-scroll-top-button.show {
         opacity: 1;
@@ -643,15 +848,17 @@ GM_addStyle(`
     .xt-scroll-top-button:hover {
         background: #1d9bf0;
         border-color: #1d9bf0;
+        color: #ffffff;
         transform: translateY(-1px);
     }
     .xt-scroll-top-button:active {
         transform: translateY(0);
     }
     .xt-scroll-top-button.xt-dark {
-        background: rgba(239, 243, 244, 0.92);
-        color: #0f1419;
-        border-color: rgba(255, 255, 255, 0.16);
+        background: #16181c;
+        color: #e7e9ea;
+        border-color: #2f3336;
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
     }
     .xt-scroll-top-button.xt-dark:hover {
         background: #1d9bf0;
@@ -804,6 +1011,51 @@ function bindSegmentedControl(container, initialValue) {
 
 // 配置面板 DOM 动态管理
 let modalOverlay = null;
+let restoreSettingsPageScroll = null;
+
+function lockSettingsPageScroll() {
+    if (restoreSettingsPageScroll) return;
+
+    const html = document.documentElement;
+    const body = document.body;
+    const scrollTop = window.scrollY || document.scrollingElement?.scrollTop || 0;
+    const previousStyles = {
+        htmlOverflow: html.style.overflow,
+        bodyOverflow: body.style.overflow,
+        bodyPosition: body.style.position,
+        bodyTop: body.style.top,
+        bodyWidth: body.style.width
+    };
+
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollTop}px`;
+    body.style.width = '100%';
+
+    restoreSettingsPageScroll = () => {
+        html.style.overflow = previousStyles.htmlOverflow;
+        body.style.overflow = previousStyles.bodyOverflow;
+        body.style.position = previousStyles.bodyPosition;
+        body.style.top = previousStyles.bodyTop;
+        body.style.width = previousStyles.bodyWidth;
+        restoreSettingsPageScroll = null;
+        window.scrollTo(0, scrollTop);
+    };
+}
+
+function unlockSettingsPageScroll() {
+    if (restoreSettingsPageScroll) {
+        restoreSettingsPageScroll();
+    }
+}
+
+function preventSettingsBackgroundScroll(event) {
+    const modalBody = modalOverlay?.querySelector('.xt-modal-body');
+    const target = event.target instanceof Node ? event.target : null;
+    if (!modalBody || !target || modalBody.contains(target)) return;
+    event.preventDefault();
+}
 
 function createSettingsModal() {
     if (modalOverlay) {
@@ -835,26 +1087,31 @@ function createSettingsModal() {
     modalOverlay.innerHTML = `
         <div class="xt-modal">
             <div class="xt-modal-header">
-                <h3 class="xt-modal-title">🤖 X AI 翻译配置</h3>
-                <button class="xt-modal-close" id="xt-close-btn" type="button" aria-label="关闭设置">×</button>
+                <div class="xt-modal-title-group">
+                    <div class="xt-modal-kicker">X Translate</div>
+                    <h3 class="xt-modal-title">${TRANSLATE_ICON_SVG}<span>翻译设置</span></h3>
+                </div>
+                <button class="xt-modal-close" id="xt-close-btn" type="button" aria-label="关闭设置">${CLOSE_ICON_SVG}</button>
             </div>
             <div class="xt-modal-body">
                 <div class="xt-form-group">
                     <label class="xt-form-label">API Key</label>
                     <div class="xt-api-key-container">
                         <input type="password" id="xt-api-key" class="xt-input" placeholder="输入 API 密钥 (API Key)" value="${safeSettings.apiKey}" autocomplete="off">
-                        <button class="xt-eye-btn" id="xt-eye-toggle" type="button" aria-label="显示 API Key">👁️</button>
+                        <button class="xt-eye-btn" id="xt-eye-toggle" type="button" aria-label="显示 API Key">${EYE_ICON_SVG}</button>
                     </div>
                 </div>
 
-                <div class="xt-form-group">
-                    <label class="xt-form-label">接口地址 (Base URL / Endpoint)</label>
-                    <input type="text" id="xt-base-url" class="xt-input" placeholder="https://api.openai.com/v1" value="${safeSettings.baseUrl}" autocomplete="off">
-                </div>
+                <div class="xt-field-row">
+                    <div class="xt-form-group">
+                        <label class="xt-form-label">接口地址</label>
+                        <input type="text" id="xt-base-url" class="xt-input" placeholder="https://api.openai.com/v1" value="${safeSettings.baseUrl}" autocomplete="off">
+                    </div>
 
-                <div class="xt-form-group">
-                    <label class="xt-form-label">模型 (Model / Endpoint ID)</label>
-                    <input type="text" id="xt-model" class="xt-input" placeholder="gpt-4o-mini" value="${safeSettings.model}" autocomplete="off">
+                    <div class="xt-form-group">
+                        <label class="xt-form-label">模型</label>
+                        <input type="text" id="xt-model" class="xt-input" placeholder="gpt-4o-mini" value="${safeSettings.model}" autocomplete="off">
+                    </div>
                 </div>
 
                 <div class="xt-form-group">
@@ -864,11 +1121,11 @@ function createSettingsModal() {
                     </div>
                 </div>
 
-                <div>
-                    <button class="xt-prompt-toggle" id="xt-prompt-toggle" type="button" aria-expanded="false">
-                        <span>高级选项：自定义翻译提示词 (Prompts)</span>
-                        <span class="xt-prompt-arrow" id="xt-prompt-arrow">▼</span>
-                    </button>
+                <div class="xt-advanced-panel">
+                    <div class="xt-advanced-title">
+                        <span>高级选项</span>
+                        <small>提示词、缓存时间和输出风格</small>
+                    </div>
                     <div class="xt-prompt-container" id="xt-prompt-container">
                         <div class="xt-form-group">
                             <label class="xt-form-label">缓存有效期（小时）</label>
@@ -879,26 +1136,31 @@ function createSettingsModal() {
                                 <label class="xt-form-label">System Prompt</label>
                                 <button class="xt-btn-reset" id="xt-reset-sys" type="button">恢复默认</button>
                             </div>
-                            <textarea id="xt-sys-prompt" class="xt-textarea" rows="2" style="resize:vertical;">${safeSettings.systemPrompt}</textarea>
+                            <textarea id="xt-sys-prompt" class="xt-textarea" rows="2">${safeSettings.systemPrompt}</textarea>
                         </div>
                         <div class="xt-form-group">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <label class="xt-form-label">User Prompt（自定义部分）</label>
                                 <button class="xt-btn-reset" id="xt-reset-user" type="button">恢复默认</button>
                             </div>
-                            <textarea id="xt-user-prompt" class="xt-textarea" rows="4" style="resize:vertical;">${safeSettings.userPrompt}</textarea>
+                            <textarea id="xt-user-prompt" class="xt-textarea" rows="4">${safeSettings.userPrompt}</textarea>
                         </div>
                     </div>
                 </div>
             </div>
             <div class="xt-modal-footer">
-                <button class="xt-btn xt-btn-cancel" id="xt-cancel-btn" type="button">取消</button>
-                <button class="xt-btn xt-btn-save" id="xt-save-btn" type="button">保存配置</button>
+                <span class="xt-footer-note">保存后刷新 X 页面生效</span>
+                <div class="xt-footer-actions">
+                    <button class="xt-btn xt-btn-cancel" id="xt-cancel-btn" type="button">取消</button>
+                    <button class="xt-btn xt-btn-save" id="xt-save-btn" type="button">${CHECK_ICON_SVG}<span>保存</span></button>
+                </div>
             </div>
         </div>
     `;
 
     document.body.appendChild(modalOverlay);
+    modalOverlay.addEventListener('wheel', preventSettingsBackgroundScroll, { passive: false });
+    modalOverlay.addEventListener('touchmove', preventSettingsBackgroundScroll, { passive: false });
     
     const closeBtn = modalOverlay.querySelector('#xt-close-btn');
     const cancelBtn = modalOverlay.querySelector('#xt-cancel-btn');
@@ -911,9 +1173,6 @@ function createSettingsModal() {
     const sysPromptInput = modalOverlay.querySelector('#xt-sys-prompt');
     const userPromptInput = modalOverlay.querySelector('#xt-user-prompt');
     const cacheTTLInput = modalOverlay.querySelector('#xt-cache-ttl');
-    const promptToggle = modalOverlay.querySelector('#xt-prompt-toggle');
-    const promptContainer = modalOverlay.querySelector('#xt-prompt-container');
-    const promptArrow = modalOverlay.querySelector('#xt-prompt-arrow');
     const resetSysBtn = modalOverlay.querySelector('#xt-reset-sys');
     const resetUserBtn = modalOverlay.querySelector('#xt-reset-user');
     
@@ -922,19 +1181,13 @@ function createSettingsModal() {
     eyeToggle.addEventListener('click', () => {
         if (apiKeyInput.type === 'password') {
             apiKeyInput.type = 'text';
-            eyeToggle.textContent = '🔒';
+            eyeToggle.innerHTML = EYE_OFF_ICON_SVG;
             eyeToggle.setAttribute('aria-label', '隐藏 API Key');
         } else {
             apiKeyInput.type = 'password';
-            eyeToggle.textContent = '👁️';
+            eyeToggle.innerHTML = EYE_ICON_SVG;
             eyeToggle.setAttribute('aria-label', '显示 API Key');
         }
-    });
-
-    promptToggle.addEventListener('click', () => {
-        const isShown = promptContainer.classList.toggle('show');
-        promptArrow.textContent = isShown ? '▲' : '▼';
-        promptToggle.setAttribute('aria-expanded', String(isShown));
     });
 
     resetSysBtn.addEventListener('click', () => {
@@ -946,6 +1199,7 @@ function createSettingsModal() {
 
     const closeModal = () => {
         modalOverlay.classList.remove('show');
+        unlockSettingsPageScroll();
     };
 
     closeBtn.addEventListener('click', closeModal);
@@ -1009,7 +1263,7 @@ function populateSettingsModal(settings) {
         apiKeyInput.type = 'password';
     }
     if (eyeToggle) {
-        eyeToggle.textContent = '👁️';
+        eyeToggle.innerHTML = EYE_ICON_SVG;
         eyeToggle.setAttribute('aria-label', '显示 API Key');
     }
     if (baseUrlInput) baseUrlInput.value = settings.baseUrl;
@@ -1025,6 +1279,7 @@ function showSettingsModal() {
     const settings = getSettings();
     const modal = modalOverlay;
     populateSettingsModal(settings);
+    lockSettingsPageScroll();
 
     setTimeout(() => {
         modal.classList.add('show');
@@ -1038,7 +1293,8 @@ function showToast(message) {
         toastEl.className = 'xt-toast';
         document.body.appendChild(toastEl);
     }
-    toastEl.textContent = message;
+    toastEl.classList.toggle('xt-dark', isDarkTheme());
+    toastEl.innerHTML = `${CHECK_ICON_SVG}<span>${escapeHtml(message)}</span>`;
     toastEl.classList.add('show');
     setTimeout(() => {
         toastEl.classList.remove('show');
@@ -1046,7 +1302,7 @@ function showToast(message) {
 }
 
 if (typeof GM_registerMenuCommand === 'function') {
-    GM_registerMenuCommand('⚙️ 配置 AI 翻译 API', showSettingsModal);
+    GM_registerMenuCommand('配置 X 翻译 API', showSettingsModal);
 }
 
 let scrollTopButton = null;
@@ -1295,6 +1551,65 @@ function htmlToMarkdown(element) {
     return Array.from(element.childNodes).map(processNode).join('').trim();
 }
 
+function createTranslationContainerElement() {
+    const translationContainer = document.createElement('div');
+    translationContainer.className = 'translation-container';
+
+    translationContainer.style.cssText = `
+        margin: ${STYLES.TRANSLATION_CONTAINER.margin};
+        padding: ${STYLES.TRANSLATION_CONTAINER.padding};
+        font-family: ${STYLES.TRANSLATION_CONTAINER.fontFamily};
+        font-size: ${STYLES.TRANSLATION_CONTAINER.fontSize};
+        line-height: ${STYLES.TRANSLATION_CONTAINER.lineHeight};
+        color: ${STYLES.TRANSLATION_CONTAINER.color};
+    `;
+
+    if (isDarkTheme()) {
+        translationContainer.classList.add('xt-dark');
+    }
+
+    return translationContainer;
+}
+
+function renderTranslationShell(contentHtml) {
+    return `
+        <div class="translation-container-header">${TRANSLATE_ICON_SVG}<span>AI 翻译</span></div>
+        <div class="translation-container-content">${contentHtml}</div>
+    `;
+}
+
+function getTranslationContentHtml(translatedText) {
+    try {
+        if (typeof marked !== 'undefined') {
+            marked.setOptions({
+                breaks: true,
+                gfm: true,
+                headerIds: false,
+                mangle: false,
+            });
+
+            const rawHtml = marked.parse(translatedText);
+            return typeof DOMPurify !== 'undefined'
+                ? DOMPurify.sanitize(rawHtml)
+                : rawHtml;
+        }
+        console.warn('[X-Translate] Marked library not loaded, falling back to basic formatting');
+    } catch (e) {
+        console.error('[X-Translate] Error rendering Markdown:', e);
+    }
+
+    return escapeHtml(translatedText).replace(/\n/g, '<br>');
+}
+
+function setTranslationContainerHtml(translationContainer, contentHtml) {
+    if (!translationContainer) return;
+    translationContainer.innerHTML = renderTranslationShell(contentHtml);
+}
+
+function setTranslationContainerContent(translationContainer, translatedText) {
+    setTranslationContainerHtml(translationContainer, getTranslationContentHtml(translatedText));
+}
+
 // 工具函数：设置翻译结果到元素，支持 Markdown
 function setTranslation({ element, translatedText }) {
     if (!element || !translatedText) return;
@@ -1311,46 +1626,8 @@ function setTranslation({ element, translatedText }) {
         }
     }
 
-    const translationContainer = document.createElement('div');
-    translationContainer.className = 'translation-container';
-
-    translationContainer.style.cssText = `
-        margin: ${STYLES.TRANSLATION_CONTAINER.margin};
-        padding: ${STYLES.TRANSLATION_CONTAINER.padding};
-        font-family: ${STYLES.TRANSLATION_CONTAINER.fontFamily};
-        font-size: ${STYLES.TRANSLATION_CONTAINER.fontSize};
-        line-height: ${STYLES.TRANSLATION_CONTAINER.lineHeight};
-        color: ${STYLES.TRANSLATION_CONTAINER.color};
-    `;
-
-    try {
-        if (typeof marked !== 'undefined') {
-            marked.setOptions({
-                breaks: true,
-                gfm: true,
-                headerIds: false,
-                mangle: false,
-            });
-
-            const rawHtml = marked.parse(translatedText);
-            translationContainer.innerHTML = typeof DOMPurify !== 'undefined'
-                ? DOMPurify.sanitize(rawHtml)
-                : rawHtml;
-        } else {
-            console.warn('[X-Translate] Marked library not loaded, falling back to basic formatting');
-            const contentWrapper = document.createElement('div');
-            contentWrapper.className = 'content-wrapper';
-            contentWrapper.innerHTML = translatedText.replace(/\n/g, '<br>');
-            translationContainer.appendChild(contentWrapper);
-        }
-    } catch (e) {
-        console.error('[X-Translate] Error rendering Markdown:', e);
-        translationContainer.innerHTML = translatedText.replace(/\n/g, '<br>');
-    }
-
-    if (isDarkTheme()) {
-        translationContainer.classList.add('xt-dark');
-    }
+    const translationContainer = createTranslationContainerElement();
+    setTranslationContainerContent(translationContainer, translatedText);
 
     const parent = element.parentNode;
     if (parent) {
@@ -1392,6 +1669,32 @@ function hasChineseChar(text) {
 
 function hasNonChineseTranslatableChar(text) {
     return /[a-zA-Z\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(text);
+}
+
+function normalizeLinkCandidateText(text) {
+    return (text || '')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function isUrlLikeTextToken(token) {
+    const normalizedToken = normalizeLinkCandidateText(token)
+        .replace(/^[<([{]+/, '')
+        .replace(/[>\])}.,;:!?，。；：！？]+$/, '');
+
+    if (!normalizedToken) return false;
+    if (/^https?:\/\/\S+$/i.test(normalizedToken)) return true;
+
+    return /^(?:www\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{2,5})?(?:[/?#]\S*)?$/i.test(normalizedToken);
+}
+
+function isPureLinkText(text) {
+    const normalizedText = normalizeLinkCandidateText(text);
+    if (!normalizedText) return false;
+
+    const tokens = normalizedText.split(' ').filter(Boolean);
+    return tokens.length > 0 && tokens.every(isUrlLikeTextToken);
 }
 
 function getNonChineseWordCount(text) {
@@ -1562,6 +1865,10 @@ function getTweetTextElement(tweetElement) {
     if (!text) {
         return { status: 'retry' };
     }
+
+    if (isPureLinkText(text)) {
+        return { status: 'skip', reason: 'pure_link', text };
+    }
     
     // 按钮注入只判断是否存在可翻译的非中文字符；自动翻译资格在 startTweetTranslation 中判断。
     if (!hasNonChineseTranslatableChar(text)) {
@@ -1610,17 +1917,8 @@ function translateText(text, originalElement, cacheKey, onCompleteCallback) {
     console.log('[X-Translate] Sending GM.xmlHttpRequest to:', targetEndpoint, 'with model:', apiConfig.model);
 
     // 创建流式翻译容器（立即可见，逐字填充）
-    const translationContainer = document.createElement('div');
-    translationContainer.className = 'translation-container';
-    translationContainer.style.cssText = `
-        margin: ${STYLES.TRANSLATION_CONTAINER.margin};
-        padding: ${STYLES.TRANSLATION_CONTAINER.padding};
-        font-family: ${STYLES.TRANSLATION_CONTAINER.fontFamily};
-        font-size: ${STYLES.TRANSLATION_CONTAINER.fontSize};
-        line-height: ${STYLES.TRANSLATION_CONTAINER.lineHeight};
-        color: ${STYLES.TRANSLATION_CONTAINER.color};
-    `;
-    if (isDarkTheme()) translationContainer.classList.add('xt-dark');
+    const translationContainer = createTranslationContainerElement();
+    setTranslationContainerHtml(translationContainer, '<span class="translation-placeholder">翻译中...</span>');
 
     const parent = originalElement.parentNode;
     if (parent) {
@@ -1659,36 +1957,20 @@ function translateText(text, originalElement, cacheKey, onCompleteCallback) {
     // 流式渲染：用纯文本实时更新，避免不完整 Markdown 解析异常
     function updateStreamingContent() {
         if (!accumulatedText) {
-            translationContainer.innerHTML = '<span style="opacity:0.5">翻译中…</span>';
+            setTranslationContainerHtml(translationContainer, '<span class="translation-placeholder">翻译中...</span>');
             return;
         }
-        const escaped = accumulatedText
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/\n/g, '<br>');
-        translationContainer.innerHTML = escaped;
+        const escaped = escapeHtml(accumulatedText).replace(/\n/g, '<br>');
+        setTranslationContainerHtml(translationContainer, escaped);
     }
 
     // 最终渲染：用 marked 做完整 Markdown 渲染
     function finalizeTranslation() {
         if (!accumulatedText) {
-            translationContainer.innerHTML = 'Translation failed';
+            setTranslationContainerContent(translationContainer, '翻译失败，请重试。');
             return;
         }
-        try {
-            if (typeof marked !== 'undefined') {
-                marked.setOptions({ breaks: true, gfm: true, headerIds: false, mangle: false });
-                const rawHtml = marked.parse(accumulatedText);
-                translationContainer.innerHTML = typeof DOMPurify !== 'undefined'
-                    ? DOMPurify.sanitize(rawHtml) : rawHtml;
-            } else {
-                translationContainer.innerHTML = accumulatedText.replace(/\n/g, '<br>');
-            }
-        } catch (e) {
-            console.error('[X-Translate] Error rendering final Markdown:', e);
-            translationContainer.innerHTML = accumulatedText.replace(/\n/g, '<br>');
-        }
+        setTranslationContainerContent(translationContainer, accumulatedText);
     }
 
     GM.xmlHttpRequest({
@@ -1723,11 +2005,11 @@ function translateText(text, originalElement, cacheKey, onCompleteCallback) {
                             const responseJson = JSON.parse(response.responseText);
                             accumulatedText = responseJson.choices?.[0]?.message?.content || '';
                         }
-                        if (!accumulatedText) accumulatedText = 'Translation failed';
+                        if (!accumulatedText) accumulatedText = '翻译失败，请重试。';
                         finalizeTranslation();
                     } catch (e) {
                         console.error('[X-Translate] Failed to parse response:', e, 'Raw:', response.responseText);
-                        translationContainer.innerHTML = '解析 API 响应失败，请重试。';
+                        setTranslationContainerContent(translationContainer, '解析 API 响应失败，请重试。');
                     }
                 }
                 console.log('[X-Translate] Translated text snippet:', accumulatedText.substring(0, 30));
@@ -1750,23 +2032,23 @@ function translateText(text, originalElement, cacheKey, onCompleteCallback) {
                 } else {
                     errorMsg += `(错误码: ${response.status})`;
                 }
-                translationContainer.innerHTML = errorMsg;
+                setTranslationContainerContent(translationContainer, errorMsg);
                 if (onCompleteCallback) onCompleteCallback();
             }
         },
         onerror: function(error) {
             console.error('[X-Translate] GM.xmlHttpRequest error:', error);
-            translationContainer.innerHTML = '网络请求错误，请检查您的网络连接或接口地址是否可用。';
+            setTranslationContainerContent(translationContainer, '网络请求错误，请检查您的网络连接或接口地址是否可用。');
             if (onCompleteCallback) onCompleteCallback();
         },
         onabort: function() {
             console.error('[X-Translate] GM.xmlHttpRequest aborted');
-            translationContainer.innerHTML = '请求已中止。';
+            setTranslationContainerContent(translationContainer, '请求已中止。');
             if (onCompleteCallback) onCompleteCallback();
         },
         ontimeout: function() {
             console.error('[X-Translate] GM.xmlHttpRequest timed out');
-            translationContainer.innerHTML = '请求超时，请检查接口服务响应速度或您的加速网络。';
+            setTranslationContainerContent(translationContainer, '请求超时，请检查接口服务响应速度或您的加速网络。');
             if (onCompleteCallback) onCompleteCallback();
         }
     });
