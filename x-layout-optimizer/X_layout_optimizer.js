@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Layout Optimizer & Article TOC
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.6
 // @description  Optimize X layout width, add reading navigation, and show article-only table of contents.
 // @author       You
 // @match        https://x.com/*
@@ -37,6 +37,7 @@
     });
     const TIMELINE_SIDEBAR_GAP = 30;
     const SIDEBAR_SEARCH_PADDING = 24;
+    const VIEWPORT_EDGE_GAP = 16;
     const SCROLL_TOP_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 5.5l-7 7 1.4 1.4L11 9.3V20h2V9.3l4.6 4.6L19 12.5z"/></svg>';
     const SCROLL_BOTTOM_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 18.5l7-7-1.4-1.4-4.6 4.6V4h-2v10.7l-4.6-4.6L5 11.5z"/></svg>';
     const TOC_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>';
@@ -145,8 +146,9 @@
         }
 
         html.xuo-article-page .xuo-article-width {
-            width: min(var(--xuo-article-width), calc(100vw - 32px)) !important;
+            width: min(100%, var(--xuo-article-width)) !important;
             max-width: none !important;
+            min-width: 0 !important;
             margin-left: auto !important;
             margin-right: auto !important;
             align-self: center !important;
@@ -282,10 +284,12 @@
 
         .xuo-toc-panel {
             position: absolute;
-            left: var(--xuo-toc-panel-offset-x, 28px);
+            left: var(--xuo-toc-panel-left, var(--xuo-toc-panel-offset-x, 28px));
+            right: auto;
             bottom: 50px;
             width: min(var(--xuo-toc-panel-width), calc(100vw - 32px));
             max-height: min(370px, calc(100vh - 220px));
+            box-sizing: border-box;
             overflow: auto;
             border: 1px solid #cfd9de;
             border-radius: 8px;
@@ -295,7 +299,7 @@
             opacity: 0;
             pointer-events: none;
             transform: translateY(6px) scale(0.98);
-            transform-origin: bottom left;
+            transform-origin: var(--xuo-toc-panel-transform-origin, bottom left);
             transition: opacity 0.16s ease, transform 0.16s ease, background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
             scrollbar-width: thin;
         }
@@ -790,6 +794,16 @@
             .xuo-footer-actions {
                 width: 100%;
             }
+            .xuo-modal-footer {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+            }
+            .xuo-btn-reset {
+                align-self: flex-start;
+                min-height: 24px;
+                white-space: nowrap;
+            }
             .xuo-btn {
                 flex: 1 1 0;
                 min-width: 0;
@@ -1103,6 +1117,7 @@
                 control.style.removeProperty('--xuo-floating-left');
                 control.style.removeProperty('--xuo-floating-right');
             });
+            updateTocPanelPosition();
             return;
         }
 
@@ -1119,6 +1134,32 @@
             control.style.setProperty('--xuo-floating-left', `${left}px`);
             control.style.setProperty('--xuo-floating-right', 'auto');
         });
+        updateTocPanelPosition();
+    }
+
+    function updateTocPanelPosition() {
+        if (!tocRoot) return;
+
+        if (window.innerWidth <= 720) {
+            tocRoot.style.removeProperty('--xuo-toc-panel-left');
+            tocRoot.style.removeProperty('--xuo-toc-panel-transform-origin');
+            return;
+        }
+
+        const rootRect = tocRoot.getBoundingClientRect();
+        if (!rootRect.width) return;
+
+        const panelWidth = Math.min(
+            currentSettings.tocPanelWidth,
+            Math.max(0, window.innerWidth - VIEWPORT_EDGE_GAP * 2)
+        );
+        const requestedLeft = rootRect.left + currentSettings.tocPanelOffsetX;
+        const maxLeft = Math.max(VIEWPORT_EDGE_GAP, window.innerWidth - panelWidth - VIEWPORT_EDGE_GAP);
+        const panelLeft = Math.min(maxLeft, Math.max(VIEWPORT_EDGE_GAP, requestedLeft));
+        const opensRight = panelLeft >= rootRect.left + rootRect.width / 2;
+
+        tocRoot.style.setProperty('--xuo-toc-panel-left', `${Math.round(panelLeft - rootRect.left)}px`);
+        tocRoot.style.setProperty('--xuo-toc-panel-transform-origin', opensRight ? 'bottom left' : 'bottom right');
     }
 
     function updateFloatingVisibility() {
@@ -1177,8 +1218,13 @@
 
         layoutUpdateFrame = requestAnimationFrame(() => {
             layoutUpdateFrame = null;
-            handleRouteChange();
+            const routeChanged = handleRouteChange();
             updatePageLayoutWidths();
+            if (routeChanged) {
+                requestAnimationFrame(scheduleFullUpdate);
+                scheduleScrollUpdate();
+                return;
+            }
             markArticleLayout();
             renderArticleToc();
             scheduleScrollUpdate();
@@ -1205,7 +1251,7 @@
         if (readView) {
             readView.classList.add('xuo-article-read-view', 'xuo-article-width');
             let node = readView.parentElement;
-            while (node && node.tagName !== 'MAIN') {
+            while (node && node.tagName !== 'MAIN' && !node.matches?.('[data-testid="primaryColumn"]')) {
                 node.classList.add('xuo-article-shell');
                 node = node.parentElement;
             }
@@ -1315,12 +1361,15 @@
     }
 
     function handleRouteChange() {
-        if (location.href === lastUrl) return;
+        if (location.href === lastUrl) return false;
 
         lastUrl = location.href;
         lastTocSignature = '';
         tocItems = [];
         closeToc();
+        // 路由切换时，旧文章页的容器可能会被 X 复用到 status 页面；先彻底去标记，下一帧再按新 DOM 标记。
+        clearArticleMarks();
+        return true;
     }
 
     function lockSettingsPageScroll() {
@@ -1396,12 +1445,12 @@
                     <div class="xuo-advanced-panel">
                         <div class="xuo-advanced-title">
                             <span>布局宽度</span>
-                            <small>时间线、文章详情页和搜索框</small>
+                            <small>最大宽度会按页面可用空间自动收缩</small>
                         </div>
                         <div class="xuo-settings-grid">
-                            ${settingInput('xuo-timeline-width', '时间线宽度（px）', 'timelineWidth')}
-                            ${settingInput('xuo-article-width', '文章详情页宽度（px）', 'articleWidth')}
-                            ${settingInput('xuo-search-width', '搜索框宽度（px）', 'searchWidth')}
+                            ${settingInput('xuo-timeline-width', '时间线最大宽度（px）', 'timelineWidth')}
+                            ${settingInput('xuo-article-width', '文章最大宽度（px）', 'articleWidth')}
+                            ${settingInput('xuo-search-width', '搜索框最大宽度（px）', 'searchWidth')}
                         </div>
                     </div>
 
