@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Translate X Post with AI (Markdown Support & Multi-Engine)
 // @namespace    http://tampermonkey.net/
-// @version      3.21
+// @version      3.23
 // @description  Dynamically translate X posts using custom AI engines (Volcengine, DeepSeek, OpenAI, etc.) with Markdown support and beautiful settings modal.
 // @author       You
 // @match        https://x.com/*
@@ -63,6 +63,13 @@ const TRANSLATION_MODE_OPTIONS = [
     { value: TRANSLATION_MODES.VIEWPORT, label: '当前视图' },
     { value: TRANSLATION_MODES.MANUAL, label: '手动点击' }
 ];
+
+const TWEET_TEXT_SELECTORS = [
+    'div[data-testid="tweetText"]',
+    'div[data-testid="newTweetText"]'
+];
+
+const TWEET_SHOW_MORE_TEXT_RE = /^(show more|显示更多|查看更多|展开|展开全文|もっと見る|さらに表示|ver más|mostrar más|voir plus|afficher plus|mehr anzeigen|mehr ansehen|mostra altro|mostra di più|mostrar mais|ver mais)$/i;
 
 const STORAGE_KEYS = {
     SETTINGS: 'x_translate_settings_v3',
@@ -153,7 +160,8 @@ GM_addStyle(`
     }
     .translation-container.show {
         opacity: 1;
-        max-height: 1200px;
+        max-height: none;
+        overflow: visible;
     }
     .translation-container.xt-dark {
         background: #080808 !important;
@@ -772,6 +780,7 @@ GM_addStyle(`
         vertical-align: middle;
         line-height: 1;
         outline: none;
+        flex: 0 0 28px;
     }
     .xt-translate-icon {
         color: #536471;
@@ -807,6 +816,15 @@ GM_addStyle(`
     }
     .xt-translate-icon.loading svg {
         animation: xt-spin 1s linear infinite;
+    }
+
+    @media (max-width: 600px) {
+        .xt-translate-icon, .xt-remove-icon {
+            width: 24px;
+            height: 24px;
+            flex-basis: 24px;
+            margin-left: 2px;
+        }
     }
 
     @keyframes xt-spin {
@@ -1420,6 +1438,84 @@ function getPostElements() {
     return document.querySelectorAll('article[data-testid="tweet"], div[data-testid="tweet"]');
 }
 
+function getTweetTextElement(tweetElement) {
+    if (!tweetElement) return null;
+
+    for (const selector of TWEET_TEXT_SELECTORS) {
+        const textElement = tweetElement.querySelector(selector);
+        if (textElement) return textElement;
+    }
+
+    return null;
+}
+
+function isElementVisible(element) {
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+}
+
+function getTweetShowMoreButton(tweetElement) {
+    if (!tweetElement) return null;
+
+    const showMoreButtons = Array.from(tweetElement.querySelectorAll('[data-testid="tweet-text-show-more-link"]'));
+    const button = showMoreButtons.find(element => {
+        const text = getPlainText(element);
+        return isElementVisible(element) && (!text || TWEET_SHOW_MORE_TEXT_RE.test(text));
+    });
+
+    if (button) return button;
+
+    return Array.from(tweetElement.querySelectorAll('button, [role="button"]')).find(element => {
+        const text = getPlainText(element);
+        return isElementVisible(element) && TWEET_SHOW_MORE_TEXT_RE.test(text);
+    }) || null;
+}
+
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForTweetTextExpansion(tweetElement, previousText, timeoutMs = 1800) {
+    const startTime = Date.now();
+    let latestTextElement = getTweetTextElement(tweetElement);
+
+    while (Date.now() - startTime < timeoutMs) {
+        await wait(120);
+        latestTextElement = getTweetTextElement(tweetElement);
+        const latestText = getPlainText(latestTextElement);
+        const showMoreButton = getTweetShowMoreButton(tweetElement);
+
+        if (latestText && (latestText.length > previousText.length || (!showMoreButton && latestText !== previousText))) {
+            return latestTextElement;
+        }
+
+        if (!showMoreButton && latestTextElement) {
+            return latestTextElement;
+        }
+    }
+
+    return latestTextElement;
+}
+
+async function expandTweetTextIfNeeded(tweetElement) {
+    const showMoreButton = getTweetShowMoreButton(tweetElement);
+    if (!showMoreButton) return false;
+
+    const textElement = getTweetTextElement(tweetElement);
+    const previousText = getPlainText(textElement);
+
+    try {
+        showMoreButton.click();
+        await waitForTweetTextExpansion(tweetElement, previousText);
+        return true;
+    } catch (error) {
+        console.warn('[X-Translate] Failed to expand truncated tweet text:', error);
+        return false;
+    }
+}
+
 function hasXArticleCard(tweetElement) {
     const cardWrapper = tweetElement.querySelector('[data-testid="card.wrapper"]');
     if (!cardWrapper) return false;
@@ -1583,6 +1679,11 @@ function injectTranslateButton(tweetElement) {
     if (!timeElement) return;
 
     const timeAnchor = timeElement.closest('a') || timeElement;
+    const timeGroup = timeAnchor.parentElement;
+    if (timeGroup) {
+        timeGroup.classList.add('xt-time-group');
+        timeGroup.style.minWidth = '0';
+    }
     timeAnchor.insertAdjacentElement('afterend', btn);
     return btn;
 }
@@ -1592,7 +1693,7 @@ function shouldAutoTranslate(mode) {
     return translationMode === TRANSLATION_MODES.AUTO || translationMode === TRANSLATION_MODES.VIEWPORT;
 }
 
-function startTweetTranslation(tweetElement, candidate = null, btn = getTranslateButton(tweetElement), options = {}) {
+async function startTweetTranslation(tweetElement, candidate = null, btn = getTranslateButton(tweetElement), options = {}) {
     if (tweetElement.querySelector('.translation-container')) {
         setTranslateButtonState(btn, 'remove');
         return { status: 'already_translated' };
@@ -1601,16 +1702,20 @@ function startTweetTranslation(tweetElement, candidate = null, btn = getTranslat
         return { status: 'translating' };
     }
 
-    const translationCandidate = candidate || getTweetTranslationCandidate(tweetElement);
+    tweetElement.setAttribute('data-xt-translating', 'true');
+    setTranslateButtonState(btn, 'translate', true);
+
+    await expandTweetTextIfNeeded(tweetElement);
+
+    const translationCandidate = getTweetTranslationCandidate(tweetElement) || candidate;
     if (translationCandidate.status !== 'success') {
+        tweetElement.removeAttribute('data-xt-translating');
+        setTranslateButtonState(btn, 'translate');
         if (translationCandidate.status === 'skip' && options.showSkipToast) {
             showToast(getTranslationSkipMessage(translationCandidate.reason));
         }
         return translationCandidate;
     }
-
-    tweetElement.setAttribute('data-xt-translating', 'true');
-    setTranslateButtonState(btn, 'translate', true);
 
     translateText(translationCandidate.formattedText || translationCandidate.text, translationCandidate.element, translationCandidate.text, () => {
         tweetElement.removeAttribute('data-xt-translating');
@@ -1646,17 +1751,8 @@ function getTweetTranslationCandidate(tweetElement) {
         return { status: 'skip', reason: 'x_article_card', text: '' };
     }
 
-    const selectors = [
-        'div[data-testid="tweetText"]',
-        'div[data-testid="newTweetText"]'
-    ];
-    
-    let textElement = null;
-    for (const selector of selectors) {
-        textElement = tweetElement.querySelector(selector);
-        if (textElement) break;
-    }
-    
+    const textElement = getTweetTextElement(tweetElement);
+
     if (!textElement) {
         return { status: 'retry' };
     }
@@ -1956,7 +2052,7 @@ function processTweet(tweetElement, attempt = 0, mode = getSettings().translatio
             setTimeout(() => {
                 const btn = injectTranslateButton(tweetElement);
                 if (shouldAutoTranslate(translationMode)) {
-                    startTweetTranslation(tweetElement, result, btn);
+                    startTweetTranslation(tweetElement, null, btn);
                 }
             }, 200);
         });

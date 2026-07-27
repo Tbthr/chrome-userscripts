@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Layout Optimizer & Article TOC
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Optimize X layout width, add reading navigation, and show article-only table of contents.
 // @author       You
 // @match        https://x.com/*
@@ -35,6 +35,8 @@
         tocPanelOffsetX: { min: -160, max: 160 },
         scrollVisibilityOffset: { min: 0, max: 1200 }
     });
+    const TIMELINE_SIDEBAR_GAP = 30;
+    const SIDEBAR_SEARCH_PADDING = 24;
     const SCROLL_TOP_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 5.5l-7 7 1.4 1.4L11 9.3V20h2V9.3l4.6 4.6L19 12.5z"/></svg>';
     const SCROLL_BOTTOM_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 18.5l7-7-1.4-1.4-4.6 4.6V4h-2v10.7l-4.6-4.6L5 11.5z"/></svg>';
     const TOC_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>';
@@ -106,36 +108,30 @@
             --xuo-toc-panel-offset-x: ${DEFAULT_SETTINGS.tocPanelOffsetX}px;
         }
 
-        /* 页面布局优化：时间线、文章页和搜索框宽度由设置面板统一驱动。 */
-        main.css-175oi2r {
-            width: 100% !important;
-            max-width: none !important;
-            margin-left: auto !important;
-            margin-right: auto !important;
+        /* 仅调整带稳定 testid 的主栏；实际可用宽度由脚本按同级侧栏计算。 */
+        [data-testid="primaryColumn"].xuo-primary-layout {
+            width: min(var(--xuo-effective-timeline-width), 100%) !important;
+            max-width: min(var(--xuo-effective-timeline-width), 100%) !important;
+            flex: 0 1 auto !important;
+            box-sizing: border-box !important;
         }
 
-        div.r-f8sm7e.r-13qz1uu.r-1ye8kvj,
-        [data-testid="primaryColumn"] {
-            width: min(var(--xuo-timeline-width), calc(100vw - 32px)) !important;
-            max-width: none !important;
+        [data-testid="primaryColumn"].xuo-primary-layout.xuo-primary-standalone {
             margin-left: auto !important;
             margin-right: auto !important;
-        }
-
-        div.r-1kbdv8c {
-            width: 100% !important;
-            max-width: none !important;
         }
 
         [data-testid="sidebarColumn"] form[role="search"] {
-            width: var(--xuo-search-width) !important;
+            width: min(var(--xuo-effective-search-width), 100%) !important;
             margin-left: auto !important;
             margin-right: auto !important;
-            display: block !important;
+            box-sizing: border-box !important;
         }
 
         [data-testid="SearchBox_Search_Input"] {
-            width: var(--xuo-search-width) !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
         }
 
         html.xuo-article-page .xuo-article-shell {
@@ -181,8 +177,6 @@
         }
 
         @media (max-width: 720px) {
-            div.r-f8sm7e.r-13qz1uu.r-1ye8kvj,
-            [data-testid="primaryColumn"],
             html.xuo-article-page .xuo-article-width,
             html.xuo-article-page .xuo-article-shell {
                 width: 100% !important;
@@ -822,7 +816,8 @@
     let lastUrl = location.href;
 
     function isArticlePage() {
-        return /\/[^/]+\/article\/\d+/.test(location.pathname);
+        return Boolean(document.querySelector('[data-testid="twitterArticleReadView"]'))
+            || /\/(?:[^/]+\/article|i\/articles?)\/\d+/.test(location.pathname);
     }
 
     // 跟随 X 当前主题，保证浮动按钮、目录面板和设置弹窗在明暗模式下都可读。
@@ -849,7 +844,57 @@
         rootStyle.setProperty('--xuo-search-width', `${currentSettings.searchWidth}px`);
         rootStyle.setProperty('--xuo-toc-panel-width', `${currentSettings.tocPanelWidth}px`);
         rootStyle.setProperty('--xuo-toc-panel-offset-x', `${currentSettings.tocPanelOffsetX}px`);
+        updatePageLayoutWidths();
         scheduleScrollUpdate();
+    }
+
+    function isVisible(element) {
+        if (!element) return false;
+        const rect = element.getBoundingClientRect();
+        const styles = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && styles.display !== 'none' && styles.visibility !== 'hidden';
+    }
+
+    function getOuterWidth(element) {
+        const rect = element.getBoundingClientRect();
+        const styles = window.getComputedStyle(element);
+        return rect.width + Number.parseFloat(styles.marginLeft || '0') + Number.parseFloat(styles.marginRight || '0');
+    }
+
+    function updatePrimaryColumnWidth() {
+        const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
+        document.querySelectorAll('[data-testid="primaryColumn"].xuo-primary-layout').forEach(column => {
+            if (column !== primaryColumn) {
+                column.classList.remove('xuo-primary-layout', 'xuo-primary-standalone');
+                column.style.removeProperty('--xuo-effective-timeline-width');
+            }
+        });
+        if (!primaryColumn || !isVisible(primaryColumn) || !primaryColumn.parentElement) return;
+
+        const row = primaryColumn.parentElement;
+        const sidebar = Array.from(row.children).find(element => element.matches?.('[data-testid="sidebarColumn"]'));
+        const hasSidebar = isVisible(sidebar);
+        const availableWidth = row.getBoundingClientRect().width
+            - (hasSidebar ? getOuterWidth(sidebar) + TIMELINE_SIDEBAR_GAP : 0);
+        const effectiveWidth = Math.max(1, Math.min(currentSettings.timelineWidth, Math.floor(availableWidth)));
+
+        primaryColumn.classList.add('xuo-primary-layout');
+        primaryColumn.classList.toggle('xuo-primary-standalone', !hasSidebar);
+        primaryColumn.style.setProperty('--xuo-effective-timeline-width', `${effectiveWidth}px`);
+    }
+
+    function updateSearchWidth() {
+        const rootStyle = document.documentElement.style;
+        const sidebar = document.querySelector('[data-testid="sidebarColumn"]');
+        const availableWidth = isVisible(sidebar)
+            ? Math.max(1, Math.floor(sidebar.getBoundingClientRect().width - SIDEBAR_SEARCH_PADDING))
+            : currentSettings.searchWidth;
+        rootStyle.setProperty('--xuo-effective-search-width', `${Math.min(currentSettings.searchWidth, availableWidth)}px`);
+    }
+
+    function updatePageLayoutWidths() {
+        updatePrimaryColumnWidth();
+        updateSearchWidth();
     }
 
     function getPageScrollTop() {
@@ -1045,7 +1090,6 @@
                 || document.querySelector('main');
         }
         return document.querySelector('[data-testid="primaryColumn"]')
-            || document.querySelector('div.r-f8sm7e.r-13qz1uu.r-1ye8kvj')
             || document.querySelector('main');
     }
 
@@ -1134,6 +1178,7 @@
         layoutUpdateFrame = requestAnimationFrame(() => {
             layoutUpdateFrame = null;
             handleRouteChange();
+            updatePageLayoutWidths();
             markArticleLayout();
             renderArticleToc();
             scheduleScrollUpdate();
