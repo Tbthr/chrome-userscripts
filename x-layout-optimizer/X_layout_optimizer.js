@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Layout Optimizer & Article TOC
 // @namespace    http://tampermonkey.net/
-// @version      1.6
+// @version      1.9
 // @description  Optimize X layout width, add reading navigation, and show article-only table of contents.
 // @author       You
 // @match        https://x.com/*
@@ -20,24 +20,130 @@
     const DEFAULT_SETTINGS = Object.freeze({
         timelineWidth: 750,
         articleWidth: 800,
-        searchWidth: 300,
         floatingGap: 12,
         tocPanelWidth: 286,
         tocPanelOffsetX: 18,
-        scrollVisibilityOffset: 420
+        scrollVisibilityOffset: 420,
+        hideLeftNavigation: false,
+        hideRightSidebar: false,
+        fillCenter: false,
+        hideNavBookmarks: false,
+        hideNavJobs: false,
+        hideNavCreatorStudio: false,
+        hideNavCommunities: false,
+        hideNavBusiness: false,
+        hideNavPremium: false,
+        hideNavVerifiedOrganizations: false,
+        hideNavMonetization: false,
+        hideNavAds: false,
+        hideChatDrawer: false,
+        hideGrokDrawer: false,
+        hidePremiumUpsells: false,
+        hideTrends: false,
+        hideWhoToFollow: false,
+        hidePromotedPosts: false,
+        hideTweetShowMore: false,
+        hideDiscoverMore: false,
+        hideFooter: false
     });
     const SETTING_LIMITS = Object.freeze({
         timelineWidth: { min: 480, max: 1200 },
         articleWidth: { min: 480, max: 1200 },
-        searchWidth: { min: 180, max: 520 },
         floatingGap: { min: 0, max: 80 },
         tocPanelWidth: { min: 220, max: 520 },
         tocPanelOffsetX: { min: -160, max: 160 },
         scrollVisibilityOffset: { min: 0, max: 1200 }
     });
     const TIMELINE_SIDEBAR_GAP = 30;
-    const SIDEBAR_SEARCH_PADDING = 24;
     const VIEWPORT_EDGE_GAP = 16;
+    const BOOLEAN_SETTING_KEYS = Object.freeze([
+        'hideLeftNavigation',
+        'hideRightSidebar',
+        'fillCenter',
+        'hideNavBookmarks',
+        'hideNavJobs',
+        'hideNavCreatorStudio',
+        'hideNavCommunities',
+        'hideNavBusiness',
+        'hideNavPremium',
+        'hideNavVerifiedOrganizations',
+        'hideNavMonetization',
+        'hideNavAds',
+        'hideChatDrawer',
+        'hideGrokDrawer',
+        'hidePremiumUpsells',
+        'hideTrends',
+        'hideWhoToFollow',
+        'hidePromotedPosts',
+        'hideTweetShowMore',
+        'hideDiscoverMore',
+        'hideFooter'
+    ]);
+    const LAYOUT_EXCLUDED_PATHS = Object.freeze(['/messages', '/i/chat', '/settings']);
+    const NATIVE_DESKTOP_LAYOUT_WIDTH = 1265;
+    const NAVIGATION_CLEANUP_RULES = Object.freeze([
+        {
+            key: 'hideNavBookmarks',
+            paths: ['/i/bookmarks'],
+            labels: ['Bookmarks', '书签', '書籤', 'ブックマーク', '북마크']
+        },
+        {
+            key: 'hideNavJobs',
+            paths: ['/jobs', '/i/jobs'],
+            labels: ['Jobs', 'Careers', '工作', '工作机会', '工作機會', '求人', '채용 정보']
+        },
+        {
+            key: 'hideNavCreatorStudio',
+            paths: ['/i/jf/creators/studio'],
+            labels: ['Creator Studio', '创作者工作室', '創作者工作室', 'クリエイタースタジオ', '크리에이터 스튜디오']
+        },
+        {
+            key: 'hideNavCommunities',
+            paths: ['/i/communities'],
+            labels: ['Communities', '社区', '社群', 'コミュニティ', '커뮤니티']
+        },
+        {
+            key: 'hideNavBusiness',
+            paths: ['/i/business'],
+            labels: ['Business', '商业', '商業', 'ビジネス', '비즈니스']
+        },
+        {
+            key: 'hideNavPremium',
+            paths: ['/i/premium', '/i/premium_sign_up'],
+            labels: ['Premium', 'プレミアム']
+        },
+        {
+            key: 'hideNavVerifiedOrganizations',
+            paths: ['/i/verified-orgs', '/i/verified-orgs-signup'],
+            labels: ['Verified Organizations', 'Verified Orgs', '认证组织', '已认证组织', '已認證組織', '認証済み組織', '인증된 조직']
+        },
+        {
+            key: 'hideNavMonetization',
+            paths: ['/i/monetization'],
+            labels: ['Monetization', '变现', '营利', '營利', '収益化', '수익 창출']
+        },
+        {
+            key: 'hideNavAds',
+            paths: ['/i/ads'],
+            labels: ['Ads', '广告', '廣告', '広告']
+        }
+    ]);
+    const FOOTER_LABELS = Object.freeze(['Footer', '页脚', '頁尾', 'フッター', '바닥글']);
+    const DISCOVER_MORE_LABELS = Object.freeze([
+        'Discover more',
+        '发现更多',
+        '發現更多',
+        '探索更多',
+        'もっと見つける',
+        '더 찾아보기'
+    ]);
+    const PREMIUM_UPSELL_LABELS = Object.freeze([
+        'Subscribe to Premium',
+        '订阅 Premium',
+        '訂閱 Premium',
+        'プレミアムにサブスクライブ',
+        'Premium 구독하기'
+    ]);
     const SCROLL_TOP_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 5.5l-7 7 1.4 1.4L11 9.3V20h2V9.3l4.6 4.6L19 12.5z"/></svg>';
     const SCROLL_BOTTOM_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 18.5l7-7-1.4-1.4-4.6 4.6V4h-2v10.7l-4.6-4.6L5 11.5z"/></svg>';
     const TOC_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>';
@@ -46,11 +152,18 @@
 
     // 配置统一在这里校验，避免 CSS、定位逻辑、设置面板各自维护一套默认值。
     function normalizeSettings(rawSettings = {}) {
+        const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
         const nextSettings = {};
         Object.keys(DEFAULT_SETTINGS).forEach(key => {
+            if (BOOLEAN_SETTING_KEYS.includes(key)) {
+                nextSettings[key] = typeof source[key] === 'boolean'
+                    ? source[key]
+                    : DEFAULT_SETTINGS[key];
+                return;
+            }
             const limits = SETTING_LIMITS[key];
             const fallback = DEFAULT_SETTINGS[key];
-            const value = Number.parseInt(rawSettings[key], 10);
+            const value = Number.parseInt(source[key], 10);
             const safeValue = Number.isFinite(value) ? value : fallback;
             nextSettings[key] = Math.min(limits.max, Math.max(limits.min, safeValue));
         });
@@ -104,12 +217,77 @@
         :root {
             --xuo-timeline-width: ${DEFAULT_SETTINGS.timelineWidth}px;
             --xuo-article-width: ${DEFAULT_SETTINGS.articleWidth}px;
-            --xuo-search-width: ${DEFAULT_SETTINGS.searchWidth}px;
             --xuo-toc-panel-width: ${DEFAULT_SETTINGS.tocPanelWidth}px;
             --xuo-toc-panel-offset-x: ${DEFAULT_SETTINGS.tocPanelOffsetX}px;
         }
 
-        /* 仅调整带稳定 testid 的主栏；实际可用宽度由脚本按同级侧栏计算。 */
+        html.xuo-hide-left-navigation header[role="banner"] {
+            display: none !important;
+        }
+
+        html.xuo-hide-right-sidebar [data-testid="sidebarColumn"] {
+            display: none !important;
+        }
+
+        html.xuo-hide-chat-drawer [data-testid="chat-drawer-root"] {
+            opacity: 0 !important;
+            pointer-events: none !important;
+            transform: translate(120%, 120%) !important;
+            transition: opacity 0.15s ease, transform 0.15s ease !important;
+        }
+
+        html.xuo-hide-grok-drawer [data-testid="GrokDrawer"] {
+            opacity: 0 !important;
+            pointer-events: none !important;
+            transform: translate(120%, 120%) !important;
+            transition: opacity 0.15s ease, transform 0.15s ease !important;
+        }
+
+        html.xuo-hide-tweet-show-more [data-testid="tweet-text-show-more-link"] {
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+
+        .xuo-cleanup-hidden {
+            display: none !important;
+        }
+
+        .xuo-discover-more-list {
+            min-height: var(--xuo-discover-more-height) !important;
+        }
+
+        main.xuo-main-layout {
+            width: 100% !important;
+            max-width: none !important;
+            min-width: 0 !important;
+        }
+
+        @media (min-width: 1000px) {
+            html.xuo-layout-active:not(.xuo-hide-left-navigation) header[role="banner"] {
+                margin-left: max(${VIEWPORT_EDGE_GAP}px, calc((100vw - ${NATIVE_DESKTOP_LAYOUT_WIDTH}px) / 2)) !important;
+            }
+        }
+
+        .xuo-timeline-shell {
+            width: min(var(--xuo-effective-layout-width), 100%) !important;
+            max-width: none !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+        }
+
+        .xuo-timeline-shell-root.xuo-timeline-standalone {
+            margin-left: auto !important;
+            margin-right: auto !important;
+        }
+
+        .xuo-timeline-content-shell {
+            width: 100% !important;
+            max-width: none !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+        }
+
+        /* 仅调整带稳定 testid 的主栏；可用宽度由脚本按同级侧栏和 main 计算。 */
         [data-testid="primaryColumn"].xuo-primary-layout {
             width: min(var(--xuo-effective-timeline-width), 100%) !important;
             max-width: min(var(--xuo-effective-timeline-width), 100%) !important;
@@ -123,9 +301,10 @@
         }
 
         [data-testid="sidebarColumn"] form[role="search"] {
-            width: min(var(--xuo-effective-search-width), 100%) !important;
-            margin-left: auto !important;
-            margin-right: auto !important;
+            width: 100% !important;
+            max-width: none !important;
+            margin-left: 0 !important;
+            margin-right: 0 !important;
             box-sizing: border-box !important;
         }
 
@@ -176,6 +355,13 @@
 
         html.xuo-article-page .xuo-article-rich-content li {
             max-width: none !important;
+        }
+
+        html.xuo-article-page .xuo-article-metrics {
+            width: 100% !important;
+            max-width: none !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
         }
 
         @media (max-width: 720px) {
@@ -538,7 +724,8 @@
         .xuo-modal-close:focus-visible,
         .xuo-btn:focus-visible,
         .xuo-btn-reset:focus-visible,
-        .xuo-input:focus-visible {
+        .xuo-input:focus-visible,
+        .xuo-toggle-input:focus-visible + .xuo-toggle-track {
             outline: 2px solid #1d9bf0;
             outline-offset: 2px;
         }
@@ -546,7 +733,7 @@
         .xuo-modal-body {
             padding: 18px 22px 20px;
             overflow-y: auto;
-            flex: 0 1 auto;
+            flex: 1 1 auto;
             min-height: 0;
             box-sizing: border-box;
             display: flex;
@@ -603,7 +790,89 @@
             box-shadow: 0 0 0 1px #1d9bf0;
         }
 
+        .xuo-toggle-row {
+            min-height: 54px;
+            padding: 10px 12px;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            background: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            box-sizing: border-box;
+            cursor: pointer;
+        }
+        .xuo-modal-overlay.xuo-dark .xuo-toggle-row {
+            border-color: #2f3336;
+            background: #000000;
+        }
+        .xuo-toggle-copy {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            color: #0f1419;
+            font-size: 13px;
+            font-weight: 750;
+            line-height: 1.35;
+        }
+        .xuo-modal-overlay.xuo-dark .xuo-toggle-copy {
+            color: #e7e9ea;
+        }
+        .xuo-toggle-copy small {
+            color: #536471;
+            font-size: 11px;
+            font-weight: 500;
+            line-height: 1.3;
+        }
+        .xuo-modal-overlay.xuo-dark .xuo-toggle-copy small {
+            color: #71767b;
+        }
+        .xuo-toggle-control {
+            position: relative;
+            width: 42px;
+            height: 24px;
+            flex: 0 0 42px;
+        }
+        .xuo-toggle-input {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+        .xuo-toggle-track {
+            position: absolute;
+            inset: 0;
+            border-radius: 9999px;
+            background: #cfd9de;
+            transition: background 0.16s ease;
+            pointer-events: none;
+        }
+        .xuo-toggle-track::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: 0 1px 3px rgba(15, 20, 25, 0.24);
+            transition: transform 0.16s ease;
+        }
+        .xuo-toggle-input:checked + .xuo-toggle-track {
+            background: #1d9bf0;
+        }
+        .xuo-toggle-input:checked + .xuo-toggle-track::after {
+            transform: translateX(18px);
+        }
+
         .xuo-advanced-panel {
+            flex: 0 0 auto;
             border-radius: 12px;
             border: 1px solid #eff3f4;
             background: #f7f9f9;
@@ -834,6 +1103,21 @@
             || /\/(?:[^/]+\/article|i\/articles?)\/\d+/.test(location.pathname);
     }
 
+    function isPostDetailPage() {
+        return /^\/(?:i\/status|[^/]+\/status)\/\d+(?:\/(?:photo|video)\/\d+)?\/?$/.test(location.pathname);
+    }
+
+    function isTimelinePage() {
+        const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
+        return Boolean(primaryColumn?.querySelector('section[role="region"] [data-testid="tweet"]'));
+    }
+
+    function getScrollNavigationMode() {
+        if (isArticlePage() || isPostDetailPage()) return 'detail';
+        if (isTimelinePage()) return 'timeline';
+        return 'hidden';
+    }
+
     // 跟随 X 当前主题，保证浮动按钮、目录面板和设置弹窗在明暗模式下都可读。
     function isDarkTheme() {
         const bodyBg = window.getComputedStyle(document.body).backgroundColor;
@@ -850,14 +1134,223 @@
         return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
 
-    // 将设置写入 CSS 变量，让页面布局和目录弹层无需重新注入样式即可即时更新。
+    function isLayoutExcludedPage() {
+        return LAYOUT_EXCLUDED_PATHS.some(path => (
+            location.pathname === path || location.pathname.startsWith(`${path}/`)
+        ));
+    }
+
+    function applyRootStateClasses() {
+        const root = document.documentElement;
+        const allowLayoutChanges = !isLayoutExcludedPage();
+        const fillCenter = allowLayoutChanges && currentSettings.fillCenter;
+
+        root.classList.toggle('xuo-hide-left-navigation', allowLayoutChanges && (currentSettings.hideLeftNavigation || fillCenter));
+        root.classList.toggle('xuo-hide-right-sidebar', allowLayoutChanges && (currentSettings.hideRightSidebar || fillCenter));
+        root.classList.toggle('xuo-fill-center', fillCenter);
+        root.classList.toggle('xuo-hide-chat-drawer', currentSettings.hideChatDrawer);
+        root.classList.toggle('xuo-hide-grok-drawer', currentSettings.hideGrokDrawer);
+        root.classList.toggle('xuo-hide-tweet-show-more', currentSettings.hideTweetShowMore);
+        root.classList.remove('xuo-hide-premium-upsells');
+    }
+
+    function syncCleanupElements(key, elements) {
+        const stateClass = `xuo-cleanup-${key}`;
+        const nextElements = new Set(elements.filter(Boolean));
+
+        document.querySelectorAll(`.${stateClass}`).forEach(element => {
+            if (nextElements.has(element)) return;
+            element.classList.remove(stateClass);
+            const hasOtherCleanupState = Array.from(element.classList).some(className => (
+                className.startsWith('xuo-cleanup-') && className !== 'xuo-cleanup-hidden'
+            ));
+            if (!hasOtherCleanupState) element.classList.remove('xuo-cleanup-hidden');
+        });
+
+        nextElements.forEach(element => {
+            element.classList.add('xuo-cleanup-hidden', stateClass);
+        });
+    }
+
+    function getElementPath(element) {
+        const link = element.matches?.('a[href]') ? element : element.querySelector?.('a[href]');
+        const href = link?.getAttribute('href');
+        if (!href) return '';
+        try {
+            return new URL(href, location.origin).pathname.replace(/\/$/, '') || '/';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function matchesNavigationRule(element, rule) {
+        const path = getElementPath(element);
+        if (path && rule.paths.some(candidate => path === candidate || path.startsWith(`${candidate}/`))) {
+            return true;
+        }
+        const label = normalizeText(element.innerText || element.textContent);
+        return Boolean(label) && rule.labels.includes(label);
+    }
+
+    function updateNavigationCleanup() {
+        const candidates = Array.from(document.querySelectorAll(
+            'header[role="banner"] a[href], header[role="banner"] [role="link"], [role="menu"] a[href], [role="menu"] [role="menuitem"]'
+        ));
+
+        NAVIGATION_CLEANUP_RULES.forEach(rule => {
+            const matches = currentSettings[rule.key]
+                ? candidates.filter(element => matchesNavigationRule(element, rule))
+                : [];
+            syncCleanupElements(rule.key, matches);
+        });
+    }
+
+    function getFooterCleanupTarget(footer) {
+        const wrapper = footer.parentElement;
+        return wrapper && wrapper.children.length === 1 && wrapper.firstElementChild === footer
+            ? wrapper
+            : footer;
+    }
+
+    function updateFooterCleanup() {
+        const footers = currentSettings.hideFooter
+            ? [
+                ...Array.from(document.querySelectorAll('nav[role="navigation"][aria-label]')).filter(element => (
+                    FOOTER_LABELS.includes(normalizeText(element.getAttribute('aria-label')))
+                )).map(getFooterCleanupTarget),
+                ...document.querySelectorAll('[data-testid="sidebarColumn"] [data-testid="whoToFollowSspAd"]')
+            ]
+            : [];
+        syncCleanupElements('hideFooter', footers);
+    }
+
+    function updatePromotedPostsCleanup() {
+        const promotedCells = currentSettings.hidePromotedPosts
+            ? Array.from(document.querySelectorAll('[data-testid="placementTracking"]')).map(marker => (
+                marker.closest('[data-testid="cellInnerDiv"]')
+                    || marker.closest('[data-testid="tweet"]')
+            ))
+            : [];
+        syncCleanupElements('hidePromotedPosts', promotedCells);
+    }
+
+    function clearDiscoverMoreListMarks() {
+        document.querySelectorAll('.xuo-discover-more-list').forEach(element => {
+            element.classList.remove('xuo-discover-more-list');
+            element.style.removeProperty('--xuo-discover-more-height');
+        });
+    }
+
+    function getVirtualCellOffset(element) {
+        const match = element.style.transform.match(/translateY\((-?[\d.]+)px\)/);
+        return match ? Number.parseFloat(match[1]) : NaN;
+    }
+
+    function updateDiscoverMoreCleanup() {
+        if (!currentSettings.hideDiscoverMore || !isPostDetailPage()) {
+            syncCleanupElements('hideDiscoverMore', []);
+            clearDiscoverMoreListMarks();
+            return;
+        }
+
+        const headingCells = Array.from(document.querySelectorAll('main h2')).filter(element => (
+            DISCOVER_MORE_LABELS.includes(normalizeText(element.textContent))
+        )).map(element => element.closest('[data-testid="cellInnerDiv"]')).filter(Boolean);
+
+        // X 使用绝对定位虚拟列表；仅 display:none 不会缩短其预留高度。
+        if (!headingCells.length) return;
+
+        const activeLists = new Set();
+        const discoverMoreCells = [];
+        headingCells.forEach(headingCell => {
+            const list = headingCell.parentElement;
+            const sectionOffset = getVirtualCellOffset(headingCell);
+            if (!list || !Number.isFinite(sectionOffset)) {
+                discoverMoreCells.push(headingCell);
+                return;
+            }
+
+            activeLists.add(list);
+            list.classList.add('xuo-discover-more-list');
+            list.style.setProperty('--xuo-discover-more-height', `${Math.max(0, sectionOffset)}px`);
+            Array.from(list.children).forEach(cell => {
+                const cellOffset = getVirtualCellOffset(cell);
+                if (Number.isFinite(cellOffset) && cellOffset >= sectionOffset) {
+                    discoverMoreCells.push(cell);
+                }
+            });
+        });
+
+        document.querySelectorAll('.xuo-discover-more-list').forEach(element => {
+            if (activeLists.has(element)) return;
+            element.classList.remove('xuo-discover-more-list');
+            element.style.removeProperty('--xuo-discover-more-height');
+        });
+        syncCleanupElements('hideDiscoverMore', discoverMoreCells);
+    }
+
+    function getSidebarCard(element, sidebar) {
+        let current = element;
+        while (current && current !== sidebar) {
+            const styles = window.getComputedStyle(current);
+            if (Number.parseFloat(styles.borderTopWidth) > 0 && Number.parseFloat(styles.borderRadius) > 0) {
+                return current;
+            }
+            current = current.parentElement;
+        }
+        return element;
+    }
+
+    function updateSidebarModulesCleanup() {
+        const sidebar = document.querySelector('[data-testid="sidebarColumn"]');
+        const complementaryRegions = sidebar
+            ? Array.from(sidebar.querySelectorAll('aside[role="complementary"]'))
+            : [];
+        const premiumUpsells = currentSettings.hidePremiumUpsells
+            ? complementaryRegions.filter(element => {
+                const label = normalizeText(element.getAttribute('aria-label'));
+                if (PREMIUM_UPSELL_LABELS.includes(label)) return true;
+                return Array.from(element.querySelectorAll('a[href]')).some(link => (
+                    getElementPath(link).startsWith('/i/premium')
+                ));
+            }).map(element => getSidebarCard(element, sidebar))
+            : [];
+        const trends = currentSettings.hideTrends && sidebar
+            ? Array.from(sidebar.querySelectorAll('[data-testid="trend"]')).map(element => (
+                getSidebarCard(element.closest('section[role="region"]'), sidebar)
+            ))
+            : [];
+        const whoToFollow = currentSettings.hideWhoToFollow && sidebar
+            ? [
+                ...Array.from(sidebar.querySelectorAll('[data-testid="UserCell"]')).map(element => (
+                    getSidebarCard(element.closest('aside[role="complementary"]'), sidebar)
+                )),
+                ...sidebar.querySelectorAll('[data-testid="whoToFollowSspAd"]')
+            ]
+            : [];
+
+        syncCleanupElements('hidePremiumUpsells', premiumUpsells);
+        syncCleanupElements('hideTrends', trends);
+        syncCleanupElements('hideWhoToFollow', whoToFollow);
+    }
+
+    function updateCleanupTargets() {
+        updateNavigationCleanup();
+        updateFooterCleanup();
+        updatePromotedPostsCleanup();
+        updateDiscoverMoreCleanup();
+        updateSidebarModulesCleanup();
+    }
+
+    // 将设置写入 CSS 变量和状态 class，保持页面布局及清理开关即时更新。
     function applySettingsToDocument() {
         const rootStyle = document.documentElement.style;
         rootStyle.setProperty('--xuo-timeline-width', `${currentSettings.timelineWidth}px`);
         rootStyle.setProperty('--xuo-article-width', `${currentSettings.articleWidth}px`);
-        rootStyle.setProperty('--xuo-search-width', `${currentSettings.searchWidth}px`);
         rootStyle.setProperty('--xuo-toc-panel-width', `${currentSettings.tocPanelWidth}px`);
         rootStyle.setProperty('--xuo-toc-panel-offset-x', `${currentSettings.tocPanelOffsetX}px`);
+        applyRootStateClasses();
+        updateCleanupTargets();
         updatePageLayoutWidths();
         scheduleScrollUpdate();
     }
@@ -875,6 +1368,24 @@
         return rect.width + Number.parseFloat(styles.marginLeft || '0') + Number.parseFloat(styles.marginRight || '0');
     }
 
+    function clearTimelineLayout() {
+        document.documentElement.classList.remove('xuo-layout-active');
+        document.querySelectorAll('[data-testid="primaryColumn"].xuo-primary-layout').forEach(column => {
+            column.classList.remove('xuo-primary-layout', 'xuo-primary-standalone');
+            column.style.removeProperty('--xuo-effective-timeline-width');
+        });
+        document.querySelectorAll('.xuo-timeline-shell').forEach(element => {
+            element.classList.remove('xuo-timeline-shell', 'xuo-timeline-shell-root', 'xuo-timeline-standalone');
+        });
+        document.querySelectorAll('.xuo-timeline-content-shell').forEach(element => {
+            element.classList.remove('xuo-timeline-content-shell');
+        });
+        document.querySelectorAll('main.xuo-main-layout').forEach(main => {
+            main.classList.remove('xuo-main-layout');
+            main.style.removeProperty('--xuo-effective-layout-width');
+        });
+    }
+
     function updatePrimaryColumnWidth() {
         const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
         document.querySelectorAll('[data-testid="primaryColumn"].xuo-primary-layout').forEach(column => {
@@ -883,32 +1394,81 @@
                 column.style.removeProperty('--xuo-effective-timeline-width');
             }
         });
-        if (!primaryColumn || !isVisible(primaryColumn) || !primaryColumn.parentElement) return;
+        if (isLayoutExcludedPage() || !primaryColumn || !isVisible(primaryColumn) || !primaryColumn.parentElement) {
+            clearTimelineLayout();
+            return;
+        }
 
         const row = primaryColumn.parentElement;
+        const main = primaryColumn.closest('main');
+        if (!main || !main.contains(row)) {
+            clearTimelineLayout();
+            return;
+        }
+
+        const shells = [];
+        let shell = row;
+        while (shell && shell !== main) {
+            shells.push(shell);
+            shell = shell.parentElement;
+        }
+        if (!shells.length || shell !== main) {
+            clearTimelineLayout();
+            return;
+        }
+
+        document.documentElement.classList.add('xuo-layout-active');
+
+        const activeShells = new Set(shells);
+        document.querySelectorAll('.xuo-timeline-shell').forEach(element => {
+            if (activeShells.has(element)) return;
+            element.classList.remove('xuo-timeline-shell', 'xuo-timeline-shell-root', 'xuo-timeline-standalone');
+        });
+        document.querySelectorAll('main.xuo-main-layout').forEach(element => {
+            if (element === main) return;
+            element.classList.remove('xuo-main-layout');
+            element.style.removeProperty('--xuo-effective-layout-width');
+        });
+
+        shells.forEach(element => element.classList.add('xuo-timeline-shell'));
+        const shellRoot = shells[shells.length - 1];
+        document.querySelectorAll('.xuo-timeline-shell-root').forEach(element => {
+            if (element !== shellRoot) element.classList.remove('xuo-timeline-shell-root', 'xuo-timeline-standalone');
+        });
+        shellRoot.classList.add('xuo-timeline-shell-root');
+        main.classList.add('xuo-main-layout');
+
         const sidebar = Array.from(row.children).find(element => element.matches?.('[data-testid="sidebarColumn"]'));
-        const hasSidebar = isVisible(sidebar);
-        const availableWidth = row.getBoundingClientRect().width
-            - (hasSidebar ? getOuterWidth(sidebar) + TIMELINE_SIDEBAR_GAP : 0);
-        const effectiveWidth = Math.max(1, Math.min(currentSettings.timelineWidth, Math.floor(availableWidth)));
+        const hasSidebar = !currentSettings.fillCenter && !currentSettings.hideRightSidebar && isVisible(sidebar);
+        const mainWidth = Math.max(1, Math.floor(main.getBoundingClientRect().width));
+        const sidebarSpace = hasSidebar ? getOuterWidth(sidebar) + TIMELINE_SIDEBAR_GAP : 0;
+        const requestedTimelineWidth = currentSettings.fillCenter ? mainWidth : currentSettings.timelineWidth;
+        const requestedLayoutWidth = requestedTimelineWidth + sidebarSpace;
+        const effectiveLayoutWidth = Math.max(1, Math.min(mainWidth, Math.floor(requestedLayoutWidth)));
+        const effectiveTimelineWidth = Math.max(
+            1,
+            Math.min(requestedTimelineWidth, Math.floor(effectiveLayoutWidth - sidebarSpace))
+        );
 
         primaryColumn.classList.add('xuo-primary-layout');
         primaryColumn.classList.toggle('xuo-primary-standalone', !hasSidebar);
-        primaryColumn.style.setProperty('--xuo-effective-timeline-width', `${effectiveWidth}px`);
-    }
+        shellRoot.classList.toggle('xuo-timeline-standalone', !hasSidebar);
+        main.style.setProperty('--xuo-effective-layout-width', `${effectiveLayoutWidth}px`);
+        primaryColumn.style.setProperty('--xuo-effective-timeline-width', `${effectiveTimelineWidth}px`);
 
-    function updateSearchWidth() {
-        const rootStyle = document.documentElement.style;
-        const sidebar = document.querySelector('[data-testid="sidebarColumn"]');
-        const availableWidth = isVisible(sidebar)
-            ? Math.max(1, Math.floor(sidebar.getBoundingClientRect().width - SIDEBAR_SEARCH_PADDING))
-            : currentSettings.searchWidth;
-        rootStyle.setProperty('--xuo-effective-search-width', `${Math.min(currentSettings.searchWidth, availableWidth)}px`);
+        const activeContentShells = new Set(
+            Array.from(primaryColumn.querySelectorAll('section[role="region"]'))
+                .map(region => region.parentElement)
+                .filter(element => element && primaryColumn.contains(element))
+        );
+        document.querySelectorAll('.xuo-timeline-content-shell').forEach(element => {
+            if (!activeContentShells.has(element)) element.classList.remove('xuo-timeline-content-shell');
+        });
+        activeContentShells.forEach(element => element.classList.add('xuo-timeline-content-shell'));
     }
 
     function updatePageLayoutWidths() {
         updatePrimaryColumnWidth();
-        updateSearchWidth();
     }
 
     function getPageScrollTop() {
@@ -1168,15 +1728,22 @@
         const distanceToBottom = Math.max(0, maxScrollTop - scrollTop);
         const visibilityOffset = currentSettings.scrollVisibilityOffset;
         const hasScrollablePage = maxScrollTop > visibilityOffset;
+        const scrollNavigationMode = getScrollNavigationMode();
         const darkTheme = isDarkTheme();
 
         if (scrollTopButton) {
-            scrollTopButton.classList.toggle('show', hasScrollablePage && scrollTop > visibilityOffset);
+            scrollTopButton.classList.toggle(
+                'show',
+                scrollNavigationMode !== 'hidden' && hasScrollablePage && scrollTop > visibilityOffset
+            );
             scrollTopButton.classList.toggle('xuo-dark', darkTheme);
         }
 
         if (scrollBottomButton) {
-            scrollBottomButton.classList.toggle('show', hasScrollablePage && distanceToBottom > visibilityOffset);
+            scrollBottomButton.classList.toggle(
+                'show',
+                scrollNavigationMode === 'detail' && hasScrollablePage && distanceToBottom > visibilityOffset
+            );
             scrollBottomButton.classList.toggle('xuo-dark', darkTheme);
         }
 
@@ -1219,6 +1786,8 @@
         layoutUpdateFrame = requestAnimationFrame(() => {
             layoutUpdateFrame = null;
             const routeChanged = handleRouteChange();
+            applyRootStateClasses();
+            updateCleanupTargets();
             updatePageLayoutWidths();
             if (routeChanged) {
                 requestAnimationFrame(scheduleFullUpdate);
@@ -1233,8 +1802,8 @@
 
     function clearArticleMarks() {
         document.documentElement.classList.remove('xuo-article-page');
-        document.querySelectorAll('.xuo-article-width, .xuo-article-shell, .xuo-article-read-view, .xuo-article-rich-text, .xuo-article-rich-content').forEach(element => {
-            element.classList.remove('xuo-article-width', 'xuo-article-shell', 'xuo-article-read-view', 'xuo-article-rich-text', 'xuo-article-rich-content');
+        document.querySelectorAll('.xuo-article-width, .xuo-article-shell, .xuo-article-read-view, .xuo-article-rich-text, .xuo-article-rich-content, .xuo-article-metrics').forEach(element => {
+            element.classList.remove('xuo-article-width', 'xuo-article-shell', 'xuo-article-read-view', 'xuo-article-rich-text', 'xuo-article-rich-content', 'xuo-article-metrics');
         });
     }
 
@@ -1255,6 +1824,13 @@
                 node.classList.add('xuo-article-shell');
                 node = node.parentElement;
             }
+
+            const richTextView = readView.querySelector('[data-testid="twitterArticleRichTextView"]');
+            const metrics = Array.from(readView.querySelectorAll('[role="group"][aria-label]')).find(element => (
+                !element.closest('[data-testid="tweet"]')
+                && !(richTextView && richTextView.contains(element))
+            ));
+            if (metrics) metrics.classList.add('xuo-article-metrics');
         }
 
         const richText = document.querySelector('[data-testid="twitterArticleRichTextView"]');
@@ -1369,6 +1945,7 @@
         closeToc();
         // 路由切换时，旧文章页的容器可能会被 X 复用到 status 页面；先彻底去标记，下一帧再按新 DOM 标记。
         clearArticleMarks();
+        clearDiscoverMoreListMarks();
         return true;
     }
 
@@ -1426,6 +2003,28 @@
         `;
     }
 
+    function settingToggle(id, label, key, description = '') {
+        return `
+            <label class="xuo-toggle-row" for="${id}">
+                <span class="xuo-toggle-copy">
+                    <span>${escapeHtml(label)}</span>
+                    ${description ? `<small>${escapeHtml(description)}</small>` : ''}
+                </span>
+                <span class="xuo-toggle-control">
+                    <input
+                        type="checkbox"
+                        role="switch"
+                        id="${id}"
+                        class="xuo-toggle-input"
+                        data-setting-key="${key}"
+                        ${currentSettings[key] ? 'checked' : ''}
+                    >
+                    <span class="xuo-toggle-track" aria-hidden="true"></span>
+                </span>
+            </label>
+        `;
+    }
+
     // 设置面板复用翻译脚本的弹窗语言：顶部标题、分组面板、底部保存按钮。
     function createSettingsModal() {
         if (modalOverlay) return;
@@ -1450,7 +2049,54 @@
                         <div class="xuo-settings-grid">
                             ${settingInput('xuo-timeline-width', '时间线最大宽度（px）', 'timelineWidth')}
                             ${settingInput('xuo-article-width', '文章最大宽度（px）', 'articleWidth')}
-                            ${settingInput('xuo-search-width', '搜索框最大宽度（px）', 'searchWidth')}
+                        </div>
+                    </div>
+
+                    <div class="xuo-advanced-panel">
+                        <div class="xuo-advanced-title">
+                            <span>沉浸布局</span>
+                            <small>左右区域与时间线填满模式</small>
+                        </div>
+                        <div class="xuo-settings-grid">
+                            ${settingToggle('xuo-hide-left-navigation', '隐藏左侧导航栏', 'hideLeftNavigation')}
+                            ${settingToggle('xuo-hide-right-sidebar', '隐藏右侧栏', 'hideRightSidebar')}
+                            ${settingToggle('xuo-fill-center', '中栏填满', 'fillCenter', '临时隐藏左右栏并使用全部可用宽度')}
+                        </div>
+                    </div>
+
+                    <div class="xuo-advanced-panel">
+                        <div class="xuo-advanced-title">
+                            <span>导航入口</span>
+                            <small>每个左侧导航项都可独立隐藏</small>
+                        </div>
+                        <div class="xuo-settings-grid">
+                            ${settingToggle('xuo-hide-nav-bookmarks', '书签', 'hideNavBookmarks')}
+                            ${settingToggle('xuo-hide-nav-jobs', '工作', 'hideNavJobs')}
+                            ${settingToggle('xuo-hide-nav-creator-studio', '创作者工作室', 'hideNavCreatorStudio')}
+                            ${settingToggle('xuo-hide-nav-communities', '社群', 'hideNavCommunities')}
+                            ${settingToggle('xuo-hide-nav-business', '商业', 'hideNavBusiness')}
+                            ${settingToggle('xuo-hide-nav-premium', 'Premium', 'hideNavPremium')}
+                            ${settingToggle('xuo-hide-nav-verified-organizations', '认证组织', 'hideNavVerifiedOrganizations')}
+                            ${settingToggle('xuo-hide-nav-monetization', '营利', 'hideNavMonetization')}
+                            ${settingToggle('xuo-hide-nav-ads', '广告入口', 'hideNavAds')}
+                        </div>
+                    </div>
+
+                    <div class="xuo-advanced-panel">
+                        <div class="xuo-advanced-title">
+                            <span>页面清理</span>
+                            <small>抽屉、推广内容与帖子辅助元素</small>
+                        </div>
+                        <div class="xuo-settings-grid">
+                            ${settingToggle('xuo-hide-chat-drawer', '聊天抽屉', 'hideChatDrawer')}
+                            ${settingToggle('xuo-hide-grok-drawer', 'Grok 抽屉', 'hideGrokDrawer')}
+                            ${settingToggle('xuo-hide-premium-upsells', 'Premium 推广卡', 'hidePremiumUpsells')}
+                            ${settingToggle('xuo-hide-trends', '有什么新鲜事', 'hideTrends', '隐藏右侧趋势模块')}
+                            ${settingToggle('xuo-hide-who-to-follow', '推荐关注', 'hideWhoToFollow', '隐藏右侧账号推荐模块')}
+                            ${settingToggle('xuo-hide-promoted-posts', '时间线推广帖子', 'hidePromotedPosts')}
+                            ${settingToggle('xuo-hide-tweet-show-more', '帖子“显示更多”', 'hideTweetShowMore', '保留翻译脚本的自动展开能力')}
+                            ${settingToggle('xuo-hide-discover-more', '帖子详情“发现更多”', 'hideDiscoverMore', '隐藏标题及后续推荐帖子')}
+                            ${settingToggle('xuo-hide-footer', '页脚导航', 'hideFooter')}
                         </div>
                     </div>
 
@@ -1491,7 +2137,9 @@
         modalOverlay.querySelector('#xuo-save-btn').addEventListener('click', () => {
             const nextSettings = {};
             modalOverlay.querySelectorAll('[data-setting-key]').forEach(input => {
-                nextSettings[input.dataset.settingKey] = input.value;
+                nextSettings[input.dataset.settingKey] = input.type === 'checkbox'
+                    ? input.checked
+                    : input.value;
             });
             saveSettings(nextSettings);
             populateSettingsModal(currentSettings);
@@ -1510,7 +2158,8 @@
         if (!modalOverlay) return;
         modalOverlay.querySelectorAll('[data-setting-key]').forEach(input => {
             const key = input.dataset.settingKey;
-            input.value = settings[key];
+            if (input.type === 'checkbox') input.checked = Boolean(settings[key]);
+            else input.value = settings[key];
         });
     }
 
@@ -1539,7 +2188,7 @@
     }
 
     function observePageChanges() {
-        const target = document.querySelector('main') || document.body;
+        const target = document.body;
         if (!target) return;
 
         // X 是单页应用，滚动和切换路由时会复用 DOM；这里统一触发布局和目录刷新。
