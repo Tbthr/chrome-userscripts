@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Layout Optimizer & Article TOC
 // @namespace    http://tampermonkey.net/
-// @version      1.9
+// @version      1.10
 // @description  Optimize X layout width, add reading navigation, and show article-only table of contents.
 // @author       You
 // @match        https://x.com/*
@@ -42,7 +42,6 @@
         hideTrends: false,
         hideWhoToFollow: false,
         hidePromotedPosts: false,
-        hideTweetShowMore: false,
         hideDiscoverMore: false,
         hideFooter: false
     });
@@ -75,7 +74,6 @@
         'hideTrends',
         'hideWhoToFollow',
         'hidePromotedPosts',
-        'hideTweetShowMore',
         'hideDiscoverMore',
         'hideFooter'
     ]);
@@ -129,6 +127,7 @@
         }
     ]);
     const FOOTER_LABELS = Object.freeze(['Footer', '页脚', '頁尾', 'フッター', '바닥글']);
+    const PROMOTED_POST_LABELS = Object.freeze(['Promoted', '推广']);
     const DISCOVER_MORE_LABELS = Object.freeze([
         'Discover more',
         '发现更多',
@@ -241,11 +240,6 @@
             pointer-events: none !important;
             transform: translate(120%, 120%) !important;
             transition: opacity 0.15s ease, transform 0.15s ease !important;
-        }
-
-        html.xuo-hide-tweet-show-more [data-testid="tweet-text-show-more-link"] {
-            opacity: 0 !important;
-            pointer-events: none !important;
         }
 
         .xuo-cleanup-hidden {
@@ -1150,7 +1144,6 @@
         root.classList.toggle('xuo-fill-center', fillCenter);
         root.classList.toggle('xuo-hide-chat-drawer', currentSettings.hideChatDrawer);
         root.classList.toggle('xuo-hide-grok-drawer', currentSettings.hideGrokDrawer);
-        root.classList.toggle('xuo-hide-tweet-show-more', currentSettings.hideTweetShowMore);
         root.classList.remove('xuo-hide-premium-upsells');
     }
 
@@ -1224,12 +1217,27 @@
         syncCleanupElements('hideFooter', footers);
     }
 
+    function hasVisiblePromotedPostLabel(cell) {
+        if (!cell) return false;
+
+        const tweet = cell.querySelector?.('[data-testid="tweet"]')
+            || cell.closest?.('[data-testid="tweet"]');
+        if (!tweet) return false;
+
+        // placementTracking 也包裹普通视频；必须同时有明确的、非正文推广标签。
+        return Array.from(tweet.querySelectorAll('span, div, a')).some(element => (
+            !element.closest('[data-testid="tweetText"], [data-testid="newTweetText"]')
+            && PROMOTED_POST_LABELS.includes(normalizeText(element.textContent))
+            && isVisible(element)
+        ));
+    }
+
     function updatePromotedPostsCleanup() {
         const promotedCells = currentSettings.hidePromotedPosts
             ? Array.from(document.querySelectorAll('[data-testid="placementTracking"]')).map(marker => (
                 marker.closest('[data-testid="cellInnerDiv"]')
                     || marker.closest('[data-testid="tweet"]')
-            ))
+            )).filter(cell => hasVisiblePromotedPostLabel(cell))
             : [];
         syncCleanupElements('hidePromotedPosts', promotedCells);
     }
@@ -2094,7 +2102,6 @@
                             ${settingToggle('xuo-hide-trends', '有什么新鲜事', 'hideTrends', '隐藏右侧趋势模块')}
                             ${settingToggle('xuo-hide-who-to-follow', '推荐关注', 'hideWhoToFollow', '隐藏右侧账号推荐模块')}
                             ${settingToggle('xuo-hide-promoted-posts', '时间线推广帖子', 'hidePromotedPosts')}
-                            ${settingToggle('xuo-hide-tweet-show-more', '帖子“显示更多”', 'hideTweetShowMore', '保留翻译脚本的自动展开能力')}
                             ${settingToggle('xuo-hide-discover-more', '帖子详情“发现更多”', 'hideDiscoverMore', '隐藏标题及后续推荐帖子')}
                             ${settingToggle('xuo-hide-footer', '页脚导航', 'hideFooter')}
                         </div>
